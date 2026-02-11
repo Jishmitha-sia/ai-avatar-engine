@@ -1,5 +1,24 @@
+# Python Virtual Environment
 venv/
+ENV/
+.venv/
+
+# AI Model Files (Too large for GitHub)
+*.pth
+*.h5
+*.weights
+backend/Wav2Lip/checkpoints/
+
+# Environment Variables & Secrets
 .env
-__pycache__/
-*.mp3
-*.mp4
+
+# Generated Media & Temp Files
+backend/response.mp3
+backend/output_video.mp4
+backend/Wav2Lip/temp/*
+**/__pycache__/
+*.pyc
+
+# OS Specific Files
+.DS_Store
+Thumbs.db
