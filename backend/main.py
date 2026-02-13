@@ -35,26 +35,29 @@ def get_working_model():
 
 WORKING_MODEL_NAME = get_working_model()
 
-# 2. Robust Video Generation
+# 2. Robust Video Generation with Absolute Path Injection
 def generate_video():
-    print("🎬 Starting Lip-Sync Generation...")
+    print("Starting Lip-Sync Generation...")
     
-    # Check for FFmpeg first
     if not shutil.which("ffmpeg"):
         print("❌ CRITICAL: FFmpeg not found! Please install it with: winget install Gyan.FFmpeg")
         return
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    wav2lip_dir = os.path.join(base_dir, "Wav2Lip")
+    # Normalize base directory to use forward slashes for FFmpeg compatibility
+    base_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+    wav2lip_dir = f"{base_dir}/Wav2Lip"
     
-    face_path = os.path.join(base_dir, "avatar.jpg")
-    audio_path = os.path.join(base_dir, "response.mp3")
-    checkpoint_path = os.path.join(wav2lip_dir, "checkpoints", "wav2lip_gan.pth")
-    output_path = os.path.join(base_dir, "output_video.mp4")
+    face_path = f"{base_dir}/avatar.jpg"
+    audio_path = f"{base_dir}/response.mp3"
+    checkpoint_path = f"{wav2lip_dir}/checkpoints/wav2lip_gan.pth"
+    output_path = f"{base_dir}/output_video.mp4"
 
-    # Verify model size again
-    size = os.path.getsize(checkpoint_path)
-    print(f"📦 Model File Size: {size / (1024*1024):.2f} MB")
+    if os.path.exists(checkpoint_path):
+        size = os.path.getsize(checkpoint_path)
+        print(f"📦 Model File Size: {size / (1024*1024):.2f} MB")
+    else:
+        print(f"❌ ERROR: Model file missing at {checkpoint_path}")
+        return
 
     command = [
         sys.executable, "inference.py",
@@ -65,14 +68,14 @@ def generate_video():
     ]
 
     try:
-        print(f"⏳ Processing frames (Streaming Logs Below)...")
-        # Use shell=False for safety; run in Wav2Lip directory
+        print(f"Processing frames...")
+        # Execute from the Wav2Lip directory to allow local module imports
         process = subprocess.run(command, cwd=wav2lip_dir, check=True)
         
         if os.path.exists(output_path):
             print(f"✅ Video truly generated at: {output_path}")
         else:
-            print(f"❌ Video file missing! Wav2Lip finished but the file isn't at {output_path}")
+            print(f"❌ Video file missing! Check inference.py terminal output for errors.")
             
     except subprocess.CalledProcessError as e:
         print(f"❌ Wav2Lip process failed with exit code {e.returncode}")
