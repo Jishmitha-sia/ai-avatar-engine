@@ -1,115 +1,103 @@
-import os
-import sys
-import uvicorn
-import subprocess
+import os, sys, uvicorn, shutil, asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import google.generativeai as genai
 import edge_tts
-import asyncio
-import shutil
 
-# 1. Setup Environment
+# Paths
+base_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+sys.path.append(os.path.join(base_dir, "Wav2Lip"))
+from Wav2Lip.sprout_engine import SproutEngine
+
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=api_key)
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=["*"], 
-    allow_methods=["*"], 
-    allow_headers=["*"]
-)
+sprout_engine = None
 
-def get_working_model():
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                return m.name
-    except Exception: pass
-    return "models/gemini-1.5-flash-latest"
+# --- CONFIGURATION ---
+VOICES = [
+    {"id": "en-US-JennyNeural", "name": "Jenny (Female US)", "gender": "Female"},
+    {"id": "en-US-GuyNeural", "name": "Guy (Male US)", "gender": "Male"},
+    {"id": "en-GB-SoniaNeural", "name": "Sonia (Female UK)", "gender": "Female"},
+    {"id": "en-US-ChristopherNeural", "name": "Christopher (Male US)", "gender": "Male"}
+]
 
-WORKING_MODEL_NAME = get_working_model()
-
-# 2. Robust Video Generation with Absolute Path Injection
-def generate_video():
-    print("Starting Lip-Sync Generation...")
+@app.on_event("startup")
+async def startup_event():
+    global sprout_engine
+    print("🌱 STARTING SPROUT MULTI-AVATAR SERVER...")
     
-    if not shutil.which("ffmpeg"):
-        print("❌ CRITICAL: FFmpeg not found! Please install it with: winget install Gyan.FFmpeg")
-        return
-
-    # Normalize base directory to use forward slashes for FFmpeg compatibility
-    base_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
-    wav2lip_dir = f"{base_dir}/Wav2Lip"
+    checkpoint = f"{base_dir}/Wav2Lip/checkpoints/wav2lip_gan.pth"
+    avatars_dir = f"{base_dir}/avatars"
     
-    face_path = f"{base_dir}/avatar.jpg"
-    audio_path = f"{base_dir}/response.mp3"
-    checkpoint_path = f"{wav2lip_dir}/checkpoints/wav2lip_gan.pth"
-    output_path = f"{base_dir}/output_video.mp4"
-
-    if os.path.exists(checkpoint_path):
-        size = os.path.getsize(checkpoint_path)
-        print(f"📦 Model File Size: {size / (1024*1024):.2f} MB")
-    else:
-        print(f"❌ ERROR: Model file missing at {checkpoint_path}")
-        return
-
-    command = [
-        sys.executable, "inference.py",
-        "--checkpoint_path", checkpoint_path,
-        "--face", face_path,
-        "--audio", audio_path,
-        "--outfile", output_path
-    ]
+    if not os.path.exists(avatars_dir):
+        os.makedirs(avatars_dir)
+        print(f"⚠️ Created missing avatars folder at: {avatars_dir}")
 
     try:
-        print(f"Processing frames...")
-        # Execute from the Wav2Lip directory to allow local module imports
-        process = subprocess.run(command, cwd=wav2lip_dir, check=True)
-        
-        if os.path.exists(output_path):
-            print(f"✅ Video truly generated at: {output_path}")
-        else:
-            print(f"❌ Video file missing! Check inference.py terminal output for errors.")
-            
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Wav2Lip process failed with exit code {e.returncode}")
+        sprout_engine = SproutEngine(checkpoint, avatars_dir)
+        print("✅ SERVER READY")
+    except Exception as e:
+        print(f"❌ Engine Start Failed: {e}")
+
+@app.get("/config")
+def get_config():
+    """Returns available avatars and voices to the frontend"""
+    if not sprout_engine:
+        return {"avatars": [], "voices": VOICES}
+    
+    # List all cached filenames
+    available_avatars = list(sprout_engine.avatar_cache.keys())
+    return {
+        "avatars": available_avatars,
+        "voices": VOICES
+    }
 
 @app.post("/chat")
-async def chat_with_sprout(user_query: str):
-    print(f"\n--- Request: {user_query} ---")
+async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-JennyNeural"):
+    print(f"\n--- Chat: {user_query} | Avatar: {avatar_id} | Voice: {voice_id} ---")
+    
+    if not sprout_engine:
+        raise HTTPException(500, "Engine not active")
+
+    # Default to first available avatar if none selected
+    if not avatar_id:
+        if not sprout_engine.avatar_cache:
+            raise HTTPException(500, "No avatars loaded on server")
+        avatar_id = list(sprout_engine.avatar_cache.keys())[0]
+
     try:
-        model = genai.GenerativeModel(WORKING_MODEL_NAME)
-        response = model.generate_content(f"You are a professional tutor. Answer in 2 short sentences: {user_query}")
+        # 1. Gemini (FIXED MODEL NAME HERE)
+        # We use the standard 'gemini-1.5-flash' which is stable and fast
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(f"You are a helpful tutor. Answer briefly: {user_query}")
         ai_text = response.text
-        print(f"AI Text: {ai_text}")
         
-        audio_save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "response.mp3")
-        communicate = edge_tts.Communicate(ai_text, "en-US-JennyNeural")
-        await communicate.save(audio_save_path)
+        # 2. TTS
+        audio_path = f"{base_dir}/response.mp3"
+        communicate = edge_tts.Communicate(ai_text, voice_id)
+        await communicate.save(audio_path)
         
+        # 3. Video
+        output_path = f"{base_dir}/output_video.mp4"
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, generate_video)
+        await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
         
-        return {
-            "text": ai_text,
-            "video_url": "http://127.0.0.1:8000/get-video"
-        }
+        return {"text": ai_text, "video_url": "http://127.0.0.1:8000/get-video"}
     except Exception as e:
         print(f"ERROR: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
 
 @app.get("/get-video")
 def get_video():
-    video_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output_video.mp4")
-    if os.path.exists(video_path):
-        return FileResponse(video_path, media_type="video/mp4")
-    raise HTTPException(status_code=404, detail="Video not found on server.")
+    path = f"{base_dir}/output_video.mp4"
+    if os.path.exists(path): return FileResponse(path, media_type="video/mp4")
+    raise HTTPException(404, "Video not found")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
