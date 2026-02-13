@@ -27,6 +27,39 @@ VOICES = [
     {"id": "en-US-ChristopherNeural", "name": "Christopher (Male US)", "gender": "Male"}
 ]
 
+# --- SMART MODEL SELECTOR ---
+def get_best_model():
+    """
+    Dynamically finds a working Gemini model from the user's account.
+    This prevents 404 errors when Google renames or retires models.
+    """
+    try:
+        print("🤖 Finding best available Gemini model...")
+        available_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+        
+        # Priority list: Try to find the fastest/best models first
+        for preferred in ["models/gemini-1.5-flash", "models/gemini-1.5-flash-001", "models/gemini-pro"]:
+            if preferred in available_models:
+                print(f"✅ Selected Model: {preferred}")
+                return preferred
+        
+        # Fallback: Just take the first one that works
+        if available_models:
+            print(f"⚠️ Preferred model not found. Using fallback: {available_models[0]}")
+            return available_models[0]
+            
+    except Exception as e:
+        print(f"⚠️ Model listing failed: {e}")
+    
+    # Ultimate fallback if everything fails
+    return "models/gemini-pro"
+
+# Initialize model name once at startup
+WORKING_MODEL_NAME = get_best_model()
+
 @app.on_event("startup")
 async def startup_event():
     global sprout_engine
@@ -65,18 +98,17 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
     if not sprout_engine:
         raise HTTPException(500, "Engine not active")
 
-    # Default to first available avatar if none selected
     if not avatar_id:
         if not sprout_engine.avatar_cache:
             raise HTTPException(500, "No avatars loaded on server")
         avatar_id = list(sprout_engine.avatar_cache.keys())[0]
 
     try:
-        # 1. Gemini (FIXED MODEL NAME HERE)
-        # We use the standard 'gemini-1.5-flash' which is stable and fast
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # 1. Gemini (Using the auto-detected working model)
+        model = genai.GenerativeModel(WORKING_MODEL_NAME)
         response = model.generate_content(f"You are a helpful tutor. Answer briefly: {user_query}")
         ai_text = response.text
+        print(f"AI Response: {ai_text}")
         
         # 2. TTS
         audio_path = f"{base_dir}/response.mp3"
@@ -90,7 +122,8 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
         
         return {"text": ai_text, "video_url": "http://127.0.0.1:8000/get-video"}
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(f"❌ ERROR: {e}")
+        # Return the error to the UI so we can see it
         raise HTTPException(500, str(e))
 
 @app.get("/get-video")

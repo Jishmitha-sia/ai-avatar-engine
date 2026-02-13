@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Send, User, Bot, Loader2, Settings, Download } from 'lucide-react';
+import { Send, User, Bot, Loader2, Settings, Download, RotateCcw } from 'lucide-react';
 
 function App() {
   const [input, setInput] = useState('');
@@ -36,7 +36,6 @@ function App() {
     setVideoUrl(null);
     
     try {
-      // Send avatar and voice choice to backend
       const url = `http://127.0.0.1:8000/chat?user_query=${encodeURIComponent(input)}&avatar_id=${selectedAvatar}&voice_id=${selectedVoice}`;
       const response = await axios.post(url);
       
@@ -47,6 +46,24 @@ function App() {
       alert("Error: " + error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReplay = () => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play();
+    }
+  };
+
+  const handleDownload = () => {
+    if (videoUrl) {
+      const link = document.createElement('a');
+      link.href = videoUrl;
+      link.download = `Sprout_Response_${new Date().getTime()}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
   };
 
@@ -66,7 +83,6 @@ function App() {
             </div>
           </div>
           
-          {/* Settings Toggle */}
           <button 
             onClick={() => setShowSettings(!showSettings)}
             className={`p-2 rounded-xl transition-all ${showSettings ? 'bg-green-500 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
@@ -75,7 +91,7 @@ function App() {
           </button>
         </header>
 
-        {/* Settings Panel (Collapsible) */}
+        {/* Settings Panel */}
         {showSettings && (
           <div className="bg-slate-900/50 p-4 border-b border-slate-700 flex gap-4 items-center animate-in slide-in-from-top-2">
             <div className="flex-1">
@@ -105,7 +121,27 @@ function App() {
         <div className="flex-1 flex overflow-hidden p-6 gap-6">
           <section className="flex-[1.4] bg-black rounded-2xl overflow-hidden border border-slate-700 relative shadow-inner group">
             {videoUrl ? (
-              <video ref={videoRef} src={videoUrl} autoPlay className="w-full h-full object-contain" />
+              <>
+                <video ref={videoRef} src={videoUrl} autoPlay className="w-full h-full object-contain" />
+                
+                {/* Controls Overlay (Replay & Download) */}
+                <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                  <button 
+                    onClick={handleReplay}
+                    className="p-2 bg-slate-900/80 text-white rounded-lg hover:bg-green-600 transition-colors shadow-lg"
+                    title="Replay Video"
+                  >
+                    <RotateCcw size={20} />
+                  </button>
+                  <button 
+                    onClick={handleDownload}
+                    className="p-2 bg-slate-900/80 text-white rounded-lg hover:bg-green-600 transition-colors shadow-lg"
+                    title="Download Video"
+                  >
+                    <Download size={20} />
+                  </button>
+                </div>
+              </>
             ) : (
               <div className="h-full w-full flex flex-col items-center justify-center text-slate-600">
                 <User size={80} className="opacity-10 mb-2" />

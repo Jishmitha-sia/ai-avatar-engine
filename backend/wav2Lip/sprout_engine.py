@@ -9,12 +9,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 class SproutEngine:
     def __init__(self, checkpoint_path, avatars_dir, device='cuda'):
-        print(f"\n🚀 INITIALIZING MULTI-AVATAR ENGINE ON {device.upper()}...")
+        print(f"\n🚀 INITIALIZING CORRECTED ENGINE ON {device.upper()}...")
         self.device = device
         self.img_size = 96
         self.batch_size = 128
         self.avatars_dir = avatars_dir
-        self.avatar_cache = {}  # Stores processed tensors for each file
+        self.avatar_cache = {}
         
         # 1. Load Model
         if not os.path.exists(checkpoint_path):
@@ -25,8 +25,8 @@ class SproutEngine:
         self._cache_all_avatars()
 
     def _load_model(self, path):
-        model = Wav2Lip()
         print(f"📦 Loading Wav2Lip Model...")
+        model = Wav2Lip()
         checkpoint = torch.load(path, map_location=lambda storage, loc: storage)
         s = checkpoint["state_dict"]
         new_s = {k.replace('module.', ''): v for k, v in s.items()}
@@ -36,13 +36,15 @@ class SproutEngine:
     def _cache_all_avatars(self):
         print(f"📂 Scanning for avatars in: {self.avatars_dir}")
         valid_exts = ['.jpg', '.jpeg', '.png']
+        if not os.path.exists(self.avatars_dir):
+            os.makedirs(self.avatars_dir)
+            
         files = [f for f in os.listdir(self.avatars_dir) if os.path.splitext(f)[1].lower() in valid_exts]
         
         if not files:
             print("⚠️ WARNING: No avatar images found! Please add images to backend/avatars/")
             return
 
-        # Initialize Face Detector
         detector = face_detection.FaceAlignment(face_detection.LandmarksType._2D, 
                                                 flip_input=False, device=self.device)
 
@@ -51,11 +53,9 @@ class SproutEngine:
             print(f"   👤 Processing: {filename}...", end="")
             
             try:
-                # Load Image
                 frame = cv2.imread(path)
                 if frame is None: continue
 
-                # Detect Face
                 batch_det = detector.get_detections_for_batch(np.array([frame]))
                 rect = batch_det[0]
                 
@@ -63,7 +63,6 @@ class SproutEngine:
                     print(" ❌ No face detected. Skipping.")
                     continue
 
-                # Crop Face
                 y1, y2, x1, x2 = rect[1], rect[3], rect[0], rect[2]
                 pady1, pady2, padx1, padx2 = [0, 10, 0, 0]
                 y1 = max(0, y1 - pady1)
@@ -74,14 +73,16 @@ class SproutEngine:
                 cropped_face = frame[y1:y2, x1:x2]
                 coords = (y1, y2, x1, x2)
 
-                # Prepare GPU Tensor (The Optimization Step)
                 processed_tensor = self._prepare_face_tensor(cropped_face)
                 
-                # Store in Cache
+                # Pre-calculate blending mask for this avatar
+                blend_mask = self._generate_blend_mask(y2-y1, x2-x1)
+
                 self.avatar_cache[filename] = {
                     "full_frame": frame,
                     "coords": coords,
-                    "tensor": processed_tensor
+                    "tensor": processed_tensor,
+                    "blend_mask": blend_mask
                 }
                 print(" ✅ Cached!")
             except Exception as e:
@@ -91,30 +92,34 @@ class SproutEngine:
         # Resize to 96x96 for Wav2Lip
         face_img = cv2.resize(face_img, (self.img_size, self.img_size))
         
-        # Mask lower half
+        # [CRITICAL FIX] Mask the LOWER HALF (Mouth), not the Right Half
         img_masked = face_img.copy()
-        img_masked[:, self.img_size//2:] = 0 
+        img_masked[self.img_size//2:, :] = 0  # <--- FIXED LINE (Rows 48-96, All Cols)
         
-        # Stack layers
         img_stacked = np.concatenate((img_masked, face_img), axis=2)
-        
-        # Convert to Tensor (C,H,W)
         img_tensor = torch.FloatTensor(img_stacked).permute(2, 0, 1) / 255.
-        img_tensor = img_tensor.unsqueeze(0) # Add batch dimension
-        
+        img_tensor = img_tensor.unsqueeze(0)
         return img_tensor.to(self.device)
+
+    def _generate_blend_mask(self, h, w):
+        """Creates a soft feather mask to hide the square box edges"""
+        mask = np.zeros((h, w), dtype=np.float32)
+        pad_h, pad_w = int(h * 0.1), int(w * 0.1) 
+        cv2.rectangle(mask, (pad_w, pad_h), (w - pad_w, h - pad_h), 1.0, -1)
+        mask = cv2.GaussianBlur(mask, (21, 21), 10)
+        return np.repeat(mask[:, :, np.newaxis], 3, axis=2)
 
     def infer(self, audio_path, output_path, avatar_filename):
         if avatar_filename not in self.avatar_cache:
-            raise ValueError(f"Avatar '{avatar_filename}' not loaded! Available: {list(self.avatar_cache.keys())}")
+            avatar_filename = list(self.avatar_cache.keys())[0]
 
-        # Retrieve cached data
         data = self.avatar_cache[avatar_filename]
         cached_tensor = data["tensor"]
         full_frame = data["full_frame"]
+        blend_mask = data["blend_mask"]
         y1, y2, x1, x2 = data["coords"]
         
-        # 1. Audio Processing
+        # 1. Audio
         if not audio_path.endswith('.wav'):
             temp_wav = audio_path.replace('.mp3', '_temp.wav')
             subprocess.call(f'ffmpeg -y -i "{audio_path}" -strict -2 "{temp_wav}" -loglevel error', shell=True)
@@ -123,7 +128,7 @@ class SproutEngine:
         wav = audio.load_wav(audio_path, 16000)
         mel = audio.melspectrogram(wav)
         
-        # 2. Batching Mels
+        # 2. Batching
         mel_chunks = []
         mel_step_size = 16
         fps = 25.0
@@ -144,11 +149,11 @@ class SproutEngine:
         h, w = full_frame.shape[:2]
         out = cv2.VideoWriter(temp_avi, cv2.VideoWriter_fourcc(*'DIVX'), fps, (w, h))
         
-        # 4. Inference Loop
+        original_face_patch = full_frame[y1:y2, x1:x2].astype(np.float32)
+
+        # 4. Inference
         for batch_mels in mel_batches:
             mels_tensor = torch.FloatTensor(np.array(batch_mels)).unsqueeze(1).to(self.device)
-            
-            # Expand cached face to match audio batch size
             curr_batch_size = len(batch_mels)
             faces_tensor = cached_tensor.expand(curr_batch_size, -1, -1, -1)
             
@@ -158,9 +163,13 @@ class SproutEngine:
             pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
             
             for p in pred:
-                p_resized = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+                p = np.clip(p, 0, 255)
+                p_resized = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1)).astype(np.float32)
+                
+                blended_face = p_resized * blend_mask + original_face_patch * (1.0 - blend_mask)
+                
                 frame_copy = full_frame.copy()
-                frame_copy[y1:y2, x1:x2] = p_resized
+                frame_copy[y1:y2, x1:x2] = blended_face.astype(np.uint8)
                 out.write(frame_copy)
                 
         out.release()
