@@ -11,6 +11,7 @@ import edge_tts
 base_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 sys.path.append(os.path.join(base_dir, "Wav2Lip"))
 from Wav2Lip.sprout_engine import SproutEngine
+import json, re
 
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -99,8 +100,21 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
     if not avatar_id: avatar_id = list(sprout_engine.avatar_cache.keys())[0]
 
     try:
-        response = chat_session.send_message(user_query)
-        ai_text = response.text
+        prompt = user_query + "\n\nIMPORTANT: You must respond in valid JSON format ONLY. Do not include markdown code blocks. Structure: {\"text\": \"your 1-sentence response\", \"concepts\": [{\"title\": \"Key Term\", \"explanation\": \"1-sentence detail\"}]}"
+        
+        response = chat_session.send_message(prompt)
+        raw_text = response.text
+        
+        # Clean and parse JSON
+        try:
+            # Strip markdown if Gemini includes it
+            clean_json = re.sub(r'```json\n?|\n?```', '', raw_text).strip()
+            data = json.loads(clean_json)
+            ai_text = data.get("text", "I'm processing that.")
+            concepts = data.get("concepts", [])
+        except Exception:
+            ai_text = raw_text # Fallback
+            concepts = []
         
         # TTS
         audio_path = f"{base_dir}/response.mp3"
@@ -112,7 +126,11 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
         
-        return {"text": ai_text, "video_url": "http://127.0.0.1:8000/get-video"}
+        return {
+            "text": ai_text, 
+            "concepts": concepts,
+            "video_url": "http://127.0.0.1:8000/get-video"
+        }
     except Exception as e:
         print(f"❌ ERROR: {e}")
         raise HTTPException(500, str(e))
@@ -148,11 +166,21 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
             raise HTTPException(400, "PDF contains no readable text.")
 
         # Script Generation via Gemini
-        prompt = f"I am uploading a new document. Please read it, remember all the contents for our conversation, and respond right now ONLY with a highly engaging, 2-3 sentence summary speech script for a video presentation. Keep it conversational. Don't include stage directions or emojis:\n\n{extracted_text[:8000]}"
+        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"2-3 sentence engaging summary script\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. Document summary:\n\n{extracted_text[:8000]}"
         
         if not chat_session: raise HTTPException(500, "Memory not initialized")
         response = chat_session.send_message(prompt)
-        ai_script = response.text
+        raw_text = response.text
+        
+        # Clean and parse JSON
+        try:
+            clean_json = re.sub(r'```json\n?|\n?```', '', raw_text).strip()
+            data = json.loads(clean_json)
+            ai_script = data.get("text", "Here is a summary of your document.")
+            concepts = data.get("concepts", [])
+        except Exception:
+            ai_script = raw_text
+            concepts = []
         
         # TTS Audio
         audio_path = f"{base_dir}/response.mp3"
@@ -164,7 +192,11 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
         
-        return {"text": ai_script, "video_url": "http://127.0.0.1:8000/get-video"}
+        return {
+            "text": ai_script, 
+            "concepts": concepts,
+            "video_url": "http://127.0.0.1:8000/get-video"
+        }
     except Exception as e:
         print(f"❌ PDF ERROR: {e}")
         raise HTTPException(500, str(e))

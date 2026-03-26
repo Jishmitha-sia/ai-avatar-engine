@@ -14,6 +14,7 @@ function App() {
   const [selectedAvatar, setSelectedAvatar] = useState('');
   const [selectedVoice, setSelectedVoice] = useState('en-US-JennyNeural');
   const [showSettings, setShowSettings] = useState(false);
+  const [concepts, setConcepts] = useState([]); // <--- NEW STATE FOR BOARD
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -57,6 +58,7 @@ function App() {
       const url = `http://127.0.0.1:8000/chat?user_query=${encodeURIComponent(query)}&avatar_id=${selectedAvatar}&voice_id=${selectedVoice}`;
       const response = await axios.post(url);
       setChatHistory([...chatHistory, { type: 'user', text: query }, { type: 'bot', text: response.data.text }]);
+      if (response.data.concepts) setConcepts(response.data.concepts);
       setVideoUrl(`http://127.0.0.1:8000/get-video?t=${new Date().getTime()}`);
       setInput('');
     } catch (error) {
@@ -84,6 +86,7 @@ function App() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setChatHistory([...chatHistory, { type: 'user', text: `Uploaded PDF: ${file.name}` }, { type: 'bot', text: response.data.text }]);
+      if (response.data.concepts) setConcepts(response.data.concepts);
       setVideoUrl(`http://127.0.0.1:8000/get-video?t=${new Date().getTime()}`);
     } catch (error) {
       alert("Error: " + (error.response?.data?.detail || error.message));
@@ -218,6 +221,29 @@ function App() {
               </div>
             </div>
           </section>
+
+          {/* KNOWLEDGE BOARD PANEL */}
+          <section className="flex-[0.7] bg-slate-900/40 rounded-2xl border border-slate-700/50 flex flex-col overflow-hidden">
+             <div className="p-4 border-b border-slate-700/50 bg-slate-800/30 flex items-center gap-2">
+                <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
+                <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Live Knowledge Board</h3>
+             </div>
+             <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                {concepts.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center opacity-30 mt-10">
+                    <RotateCcw className="mb-2" size={32} />
+                    <p className="text-[10px] uppercase font-bold tracking-tighter">Waiting for insights...</p>
+                  </div>
+                ) : (
+                  concepts.map((c, i) => (
+                    <div key={i} className="bg-slate-800/80 border border-slate-600/50 p-3 rounded-xl shadow-lg animate-in fade-in slide-in-from-right-4 duration-500" style={{ animationDelay: `${i * 100}ms` }}>
+                      <h4 className="text-green-400 font-bold text-xs mb-1 uppercase tracking-wide">{c.title}</h4>
+                      <p className="text-white text-[11px] leading-relaxed opacity-90">{c.explanation}</p>
+                    </div>
+                  ))
+                )}
+             </div>
+          </section>
         </div>
 
         {/* CSS Animation for Breathing */}
@@ -226,8 +252,19 @@ function App() {
             0%, 100% { transform: scale(1); opacity: 0.9; }
             50% { transform: scale(1.02); opacity: 1; }
           }
+          @keyframes slideInRight {
+            from { transform: translateX(30px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+          }
+          @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
           .animate-breathe {
             animation: breathe 4s ease-in-out infinite;
+          }
+          .animate-in {
+            animation: fadeIn 0.5s ease-out forwards, slideInRight 0.5s ease-out forwards;
           }
         `}</style>
       </div>
