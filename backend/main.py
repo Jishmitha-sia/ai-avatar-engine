@@ -70,7 +70,7 @@ async def startup_event():
     try:
         model = genai.GenerativeModel(
             WORKING_MODEL_NAME,
-            system_instruction="You are Sprout, a helpful and fast AI tutor. Answer in 1 short sentence (max 20 words)."
+            system_instruction="You are Sprout, a helpful and fast female AI tutor. Answer in 1 short sentence (max 20 words)."
         )
         chat_session = model.start_chat(history=[])
         print("✅ MEMORY & STATIC FILES READY.")
@@ -80,7 +80,10 @@ async def startup_event():
 @app.get("/config")
 def get_config():
     if not sprout_engine: return {"avatars": [], "voices": VOICES}
-    return {"avatars": list(sprout_engine.avatar_cache.keys()), "voices": VOICES}
+    avatars = list(sprout_engine.avatar_cache.keys())
+    # Sort to ensure womantutor.jpg is first
+    avatars.sort(key=lambda x: 0 if x == "womantutor.jpg" else 1)
+    return {"avatars": avatars, "voices": VOICES}
 
 @app.get("/reset-memory")
 def reset_memory():

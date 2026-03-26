@@ -24,7 +24,10 @@ function App() {
       try {
         const res = await axios.get('http://127.0.0.1:8000/config');
         setConfig(res.data);
-        if (res.data.avatars.length > 0) setSelectedAvatar(res.data.avatars[0]);
+        if (res.data.avatars.length > 0) {
+          const defaultAv = res.data.avatars.find(a => a === "womantutor.jpg") || res.data.avatars[0];
+          setSelectedAvatar(defaultAv);
+        }
       } catch (err) { console.error("Config Error", err); }
     }
     fetchConfig();
