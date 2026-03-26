@@ -107,11 +107,15 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
         
         # Clean and parse JSON
         try:
-            # Strip markdown if Gemini includes it
-            clean_json = re.sub(r'```json\n?|\n?```', '', raw_text).strip()
-            data = json.loads(clean_json)
-            ai_text = data.get("text", "I'm processing that.")
-            concepts = data.get("concepts", [])
+            # More robust find-and-extract JSON
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                ai_text = data.get("text", "I'm processing that.")
+                concepts = data.get("concepts", [])
+            else:
+                ai_text = raw_text
+                concepts = []
         except Exception:
             ai_text = raw_text # Fallback
             concepts = []
@@ -174,10 +178,14 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
         
         # Clean and parse JSON
         try:
-            clean_json = re.sub(r'```json\n?|\n?```', '', raw_text).strip()
-            data = json.loads(clean_json)
-            ai_script = data.get("text", "Here is a summary of your document.")
-            concepts = data.get("concepts", [])
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                ai_script = data.get("text", "Here is a summary.")
+                concepts = data.get("concepts", [])
+            else:
+                ai_script = raw_text
+                concepts = []
         except Exception:
             ai_script = raw_text
             concepts = []
