@@ -1,5 +1,6 @@
 import os, sys, uvicorn, shutil, asyncio, time, fitz
 from fastapi import FastAPI, HTTPException, UploadFile, File
+import traceback
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles # <--- NEW IMPORT
 from fastapi.middleware.cors import CORSMiddleware
@@ -136,7 +137,8 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
             "video_url": "http://127.0.0.1:8000/get-video"
         }
     except Exception as e:
-        print(f"❌ ERROR: {e}")
+        print(f"❌ CHAT ERROR: {e}")
+        traceback.print_exc()
         raise HTTPException(500, str(e))
 
 @app.get("/get-video")
@@ -207,6 +209,7 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
         }
     except Exception as e:
         print(f"❌ PDF ERROR: {e}")
+        traceback.print_exc()
         raise HTTPException(500, str(e))
 
 if __name__ == "__main__":

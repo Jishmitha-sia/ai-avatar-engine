@@ -11,6 +11,9 @@ class SproutEngine:
     def __init__(self, checkpoint_path, avatars_dir, device='cuda'):
         print(f"\n🚀 INITIALIZING CORRECTED ENGINE ON {device.upper()}...")
         self.device = device
+        # [NEW] Handle Blackwell (RTX 50-series) warning
+        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 10:
+             print("💡 NOTE: RTX 50-series (Blackwell) detected. Using optimized CUDA paths if available.")
         self.img_size = 96
         self.batch_size = 128
         self.avatars_dir = avatars_dir
@@ -142,6 +145,10 @@ class SproutEngine:
             mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
             i += 1
 
+        if not mel_chunks:
+            print("⚠️ Audio too short, skipping video generation.")
+            return
+
         mel_batches = [mel_chunks[i:i + self.batch_size] for i in range(0, len(mel_chunks), self.batch_size)]
         
         # 3. Direct FFmpeg Pipe (MUCH FASTER + BROWSER FRIENDLY)
@@ -149,11 +156,18 @@ class SproutEngine:
         command = [
             'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
             '-s', f'{w}x{h}', '-pix_fmt', 'bgr24', '-r', str(fps),
-            '-i', '-', '-i', audio_path, '-vcodec', 'libx264',
-            '-pix_fmt', 'yuv420p', '-crf', '25', '-preset', 'ultrafast',
-            '-y', output_path
+            '-i', '-', '-i', audio_path, 
+            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2', # Fix for odd dimensions
+            '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', 
+            '-crf', '25', '-preset', 'ultrafast',
+            output_path
         ]
-        process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            # Capture stderr to debug why FFmpeg dies
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception as e:
+            print(f"❌ FFmpeg failed to start: {e}")
+            raise
         
         # 4. Optimized Inference Loop
         original_face_patch = full_frame[y1:y2, x1:x2].astype(np.float32)
@@ -175,7 +189,13 @@ class SproutEngine:
                 p_resized = cv2.resize(p, (x2 - x1, y2 - y1))
                 blended_face = p_resized * blend_mask + bg_contribution
                 canvas[y1:y2, x1:x2] = blended_face.astype(np.uint8)
-                process.stdin.write(canvas.tobytes())
+                try:
+                    process.stdin.write(canvas.tobytes())
+                except BrokenPipeError:
+                    # Read FFmpeg error from stderr
+                    err = process.stderr.read().decode()
+                    print(f"❌ FFmpeg Pipeline CRASHED: {err}")
+                    raise RuntimeError(f"FFmpeg Error: {err}")
                 
         process.stdin.close()
         process.wait()
