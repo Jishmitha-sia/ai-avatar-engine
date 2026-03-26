@@ -103,7 +103,7 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
     try:
         print(f"   💬 Query: {user_query}")
         print("   🧠 Asking Gemini...")
-        prompt = user_query + "\n\nIMPORTANT: You must respond in valid JSON format ONLY. Do not include markdown code blocks. Structure: {\"text\": \"your 1-sentence response\", \"concepts\": [{\"title\": \"Key Term\", \"explanation\": \"1-sentence detail\"}]}"
+        prompt = user_query + "\n\nIMPORTANT: You must respond in valid JSON format ONLY. Do not include markdown code blocks. Structure: {\"text\": \"your concise response\", \"concepts\": [{\"title\": \"Key Term\", \"explanation\": \"1-sentence detail\"}]}. Provide up to 10 concepts if the topic is complex."
         
         response = chat_session.send_message(prompt)
         raw_text = response.text
@@ -178,7 +178,7 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
             raise HTTPException(400, "PDF contains no readable text.")
 
         # Script Generation via Gemini
-        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"2-3 sentence engaging summary script\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. Document summary:\n\n{extracted_text[:8000]}"
+        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"2-3 sentence engaging summary script\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. Provide at least 8-10 comprehensive key concepts from the document. Document summary:\n\n{extracted_text[:8000]}"
         
         if not chat_session: raise HTTPException(500, "Memory not initialized")
         response = chat_session.send_message(prompt)
@@ -217,6 +217,23 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
         print(f"❌ PDF ERROR: {e}")
         traceback.print_exc()
         raise HTTPException(500, str(e))
+
+@app.post("/generate-quiz")
+def generate_quiz():
+    if not chat_session: raise HTTPException(500, "Memory not initialized")
+    
+    prompt = "Based on our conversation and the document I uploaded, generate a 3-question multiple-choice quiz. Respond in valid JSON format ONLY. Structure: [{\"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": \"Correct Option Text\"}]"
+    
+    try:
+        response = chat_session.send_message(prompt)
+        raw_text = response.text
+        match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return []
+    except Exception as e:
+        print(f"❌ QUIZ ERROR: {e}")
+        return []
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
