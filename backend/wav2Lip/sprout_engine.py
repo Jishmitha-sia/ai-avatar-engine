@@ -11,6 +11,9 @@ class SproutEngine:
     def __init__(self, checkpoint_path, avatars_dir, device='cuda'):
         print(f"\n🚀 INITIALIZING CORRECTED ENGINE ON {device.upper()}...")
         self.device = device
+        # [NEW] Handle Blackwell (RTX 50-series) warning
+        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 10:
+             print("💡 NOTE: RTX 50-series (Blackwell) detected. Using optimized CUDA paths if available.")
         self.img_size = 96
         self.batch_size = 128
         self.avatars_dir = avatars_dir
@@ -142,14 +145,38 @@ class SproutEngine:
             mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
             i += 1
 
+        if not mel_chunks:
+            print("⚠️ Audio too short, skipping video generation.")
+            return
+
         mel_batches = [mel_chunks[i:i + self.batch_size] for i in range(0, len(mel_chunks), self.batch_size)]
         
-        # 3. Video Writer
-        temp_avi = output_path.replace('.mp4', '_temp.avi')
+        # 3. Direct FFmpeg Pipe (MUCH FASTER + BROWSER FRIENDLY)
         h, w = full_frame.shape[:2]
-        out = cv2.VideoWriter(temp_avi, cv2.VideoWriter_fourcc(*'DIVX'), fps, (w, h))
+        command = [
+            'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+            '-s', f'{w}x{h}', '-pix_fmt', 'bgr24', '-r', str(fps),
+            '-i', '-', '-i', audio_path, 
+            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2', # Fix for odd dimensions
+            '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', 
+            '-crf', '25', '-preset', 'ultrafast',
+            output_path
+        ]
+        try:
+            # [CRITICAL FIX] Avoid stderr=PIPE to prevent deadlock
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=None)
+        except Exception as e:
+            print(f"❌ FFmpeg failed to start: {e}")
+            raise
         
+        # 4. Optimized Inference Loop
         original_face_patch = full_frame[y1:y2, x1:x2].astype(np.float32)
+        bg_contribution = original_face_patch * (1.0 - blend_mask)
+        canvas = full_frame.copy() # Reuse one canvas
+        
+        frame_count = 0
+        total_frames = len(mel_chunks)
+        print(f"   🎬 Generated {total_frames} audio frames. Starting video generation...")
 
         # 4. Inference
         for batch_mels in mel_batches:
@@ -163,14 +190,22 @@ class SproutEngine:
             pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
             
             for p in pred:
-                p = np.clip(p, 0, 255)
-                p_resized = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1)).astype(np.float32)
+                p_resized = cv2.resize(p, (x2 - x1, y2 - y1))
+                blended_face = p_resized * blend_mask + bg_contribution
+                canvas[y1:y2, x1:x2] = blended_face.astype(np.uint8)
+                try:
+                    process.stdin.write(canvas.tobytes())
+                    frame_count += 1
+                    if frame_count % 50 == 0:
+                        print(f"      🎞️  Encoding: {frame_count}/{total_frames} ({(frame_count/total_frames)*100:.1f}%)", end="\r")
+                except BrokenPipeError:
+                    print("❌ FFmpeg Pipeline CRASHED. Check console above for error.")
+                    raise RuntimeError("FFmpeg Pipeline CRASHED.")
                 
-                blended_face = p_resized * blend_mask + original_face_patch * (1.0 - blend_mask)
-                
-                frame_copy = full_frame.copy()
-                frame_copy[y1:y2, x1:x2] = blended_face.astype(np.uint8)
-                out.write(frame_copy)
-                
-        out.release()
-        subprocess.call(f'ffmpeg -y -i "{audio_path}" -i "{temp_avi}" -strict -2 -q:v 1 "{output_path}" -loglevel error', shell=True)
+        process.stdin.close()
+        process.wait()
+
+        # Clean up temp audio if created
+        if '_temp.wav' in audio_path:
+            try: os.remove(audio_path)
+            except: pass
