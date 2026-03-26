@@ -163,8 +163,8 @@ class SproutEngine:
             output_path
         ]
         try:
-            # Capture stderr to debug why FFmpeg dies
-            process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            # [CRITICAL FIX] Avoid stderr=PIPE to prevent deadlock
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=None)
         except Exception as e:
             print(f"❌ FFmpeg failed to start: {e}")
             raise
@@ -173,6 +173,10 @@ class SproutEngine:
         original_face_patch = full_frame[y1:y2, x1:x2].astype(np.float32)
         bg_contribution = original_face_patch * (1.0 - blend_mask)
         canvas = full_frame.copy() # Reuse one canvas
+        
+        frame_count = 0
+        total_frames = len(mel_chunks)
+        print(f"   🎬 Generated {total_frames} audio frames. Starting video generation...")
 
         # 4. Inference
         for batch_mels in mel_batches:
@@ -191,11 +195,12 @@ class SproutEngine:
                 canvas[y1:y2, x1:x2] = blended_face.astype(np.uint8)
                 try:
                     process.stdin.write(canvas.tobytes())
+                    frame_count += 1
+                    if frame_count % 50 == 0:
+                        print(f"      🎞️  Encoding: {frame_count}/{total_frames} ({(frame_count/total_frames)*100:.1f}%)", end="\r")
                 except BrokenPipeError:
-                    # Read FFmpeg error from stderr
-                    err = process.stderr.read().decode()
-                    print(f"❌ FFmpeg Pipeline CRASHED: {err}")
-                    raise RuntimeError(f"FFmpeg Error: {err}")
+                    print("❌ FFmpeg Pipeline CRASHED. Check console above for error.")
+                    raise RuntimeError("FFmpeg Pipeline CRASHED.")
                 
         process.stdin.close()
         process.wait()

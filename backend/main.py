@@ -101,14 +101,16 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
     if not avatar_id: avatar_id = list(sprout_engine.avatar_cache.keys())[0]
 
     try:
+        print(f"   💬 Query: {user_query}")
+        print("   🧠 Asking Gemini...")
         prompt = user_query + "\n\nIMPORTANT: You must respond in valid JSON format ONLY. Do not include markdown code blocks. Structure: {\"text\": \"your 1-sentence response\", \"concepts\": [{\"title\": \"Key Term\", \"explanation\": \"1-sentence detail\"}]}"
         
         response = chat_session.send_message(prompt)
         raw_text = response.text
+        print(f"   ✅ Gemini replied ({len(raw_text)} chars)")
         
         # Clean and parse JSON
         try:
-            # More robust find-and-extract JSON
             match = re.search(r'\{.*\}', raw_text, re.DOTALL)
             if match:
                 data = json.loads(match.group())
@@ -122,14 +124,18 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
             concepts = []
         
         # TTS
+        print(f"   🔊 Synthesizing speech: '{ai_text}'")
         audio_path = f"{base_dir}/response.mp3"
         communicate = edge_tts.Communicate(ai_text, voice_id)
         await communicate.save(audio_path)
+        print("   ✅ Audio saved.")
         
         # Video
+        print("   🎬 Generating Avatar Video...")
         output_path = f"{base_dir}/output_video.mp4"
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
+        print("   ✅ Video Generation Complete!")
         
         return {
             "text": ai_text, 
