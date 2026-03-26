@@ -1,5 +1,6 @@
-import os, sys, uvicorn, shutil, asyncio, time
-from fastapi import FastAPI, HTTPException
+import os, sys, uvicorn, shutil, asyncio, time, fitz
+from fastapi import FastAPI, HTTPException, UploadFile, File
+import traceback
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles # <--- NEW IMPORT
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ import edge_tts
 base_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 sys.path.append(os.path.join(base_dir, "Wav2Lip"))
 from Wav2Lip.sprout_engine import SproutEngine
+import json, re
 
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -70,7 +72,7 @@ async def startup_event():
     try:
         model = genai.GenerativeModel(
             WORKING_MODEL_NAME,
-            system_instruction="You are Sprout, a helpful and fast AI tutor. Answer in 1 short sentence (max 20 words)."
+            system_instruction="You are Sprout, a helpful and fast female AI tutor. Answer in 1 short sentence (max 20 words)."
         )
         chat_session = model.start_chat(history=[])
         print("✅ MEMORY & STATIC FILES READY.")
@@ -80,7 +82,10 @@ async def startup_event():
 @app.get("/config")
 def get_config():
     if not sprout_engine: return {"avatars": [], "voices": VOICES}
-    return {"avatars": list(sprout_engine.avatar_cache.keys()), "voices": VOICES}
+    avatars = list(sprout_engine.avatar_cache.keys())
+    # Sort to ensure womantutor.jpg is first
+    avatars.sort(key=lambda x: 0 if x == "womantutor.jpg" else 1)
+    return {"avatars": avatars, "voices": VOICES}
 
 @app.get("/reset-memory")
 def reset_memory():
@@ -96,22 +101,50 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
     if not avatar_id: avatar_id = list(sprout_engine.avatar_cache.keys())[0]
 
     try:
-        response = chat_session.send_message(user_query)
-        ai_text = response.text
+        print(f"   💬 Query: {user_query}")
+        print("   🧠 Asking Gemini...")
+        prompt = user_query + "\n\nIMPORTANT: You must respond in valid JSON format ONLY. Do not include markdown code blocks. Structure: {\"text\": \"your concise response\", \"concepts\": [{\"title\": \"Key Term\", \"explanation\": \"1-sentence detail\"}]}. Provide up to 10 concepts if the topic is complex."
+        
+        response = chat_session.send_message(prompt)
+        raw_text = response.text
+        print(f"   ✅ Gemini replied ({len(raw_text)} chars)")
+        
+        # Clean and parse JSON
+        try:
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                ai_text = data.get("text", "I'm processing that.")
+                concepts = data.get("concepts", [])
+            else:
+                ai_text = raw_text
+                concepts = []
+        except Exception:
+            ai_text = raw_text # Fallback
+            concepts = []
         
         # TTS
+        print(f"   🔊 Synthesizing speech: '{ai_text}'")
         audio_path = f"{base_dir}/response.mp3"
         communicate = edge_tts.Communicate(ai_text, voice_id)
         await communicate.save(audio_path)
+        print("   ✅ Audio saved.")
         
         # Video
+        print("   🎬 Generating Avatar Video...")
         output_path = f"{base_dir}/output_video.mp4"
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
+        print("   ✅ Video Generation Complete!")
         
-        return {"text": ai_text, "video_url": "http://127.0.0.1:8000/get-video"}
+        return {
+            "text": ai_text, 
+            "concepts": concepts,
+            "video_url": "http://127.0.0.1:8000/get-video"
+        }
     except Exception as e:
-        print(f"❌ ERROR: {e}")
+        print(f"❌ CHAT ERROR: {e}")
+        traceback.print_exc()
         raise HTTPException(500, str(e))
 
 @app.get("/get-video")
@@ -119,6 +152,88 @@ def get_video():
     path = f"{base_dir}/output_video.mp4"
     if os.path.exists(path): return FileResponse(path, media_type="video/mp4")
     raise HTTPException(404, "Video not found")
+
+@app.post("/pdf-to-video")
+async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voice_id: str = "en-US-JennyNeural"):
+    if not sprout_engine: raise HTTPException(500, "Engine not active")
+    if not sprout_engine.avatar_cache: raise HTTPException(500, "No avatars available")
+    
+    available_avatars = list(sprout_engine.avatar_cache.keys())
+    if not avatar_id: avatar_id = available_avatars[0]
+
+    try:
+        # Save temp PDF
+        temp_pdf = f"{base_dir}/temp_upload.pdf"
+        with open(temp_pdf, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Extract Text
+        doc = fitz.open(temp_pdf)
+        extracted_text = ""
+        for page in doc:
+            extracted_text += page.get_text()
+        doc.close()
+
+        if not extracted_text.strip():
+            raise HTTPException(400, "PDF contains no readable text.")
+
+        # Script Generation via Gemini
+        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"2-3 sentence engaging summary script\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. Provide at least 8-10 comprehensive key concepts from the document. Document summary:\n\n{extracted_text[:8000]}"
+        
+        if not chat_session: raise HTTPException(500, "Memory not initialized")
+        response = chat_session.send_message(prompt)
+        raw_text = response.text
+        
+        # Clean and parse JSON
+        try:
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                ai_script = data.get("text", "Here is a summary.")
+                concepts = data.get("concepts", [])
+            else:
+                ai_script = raw_text
+                concepts = []
+        except Exception:
+            ai_script = raw_text
+            concepts = []
+        
+        # TTS Audio
+        audio_path = f"{base_dir}/response.mp3"
+        communicate = edge_tts.Communicate(ai_script, voice_id)
+        await communicate.save(audio_path)
+        
+        # Audio-driven Avatar Generation
+        output_path = f"{base_dir}/output_video.mp4"
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
+        
+        return {
+            "text": ai_script, 
+            "concepts": concepts,
+            "video_url": "http://127.0.0.1:8000/get-video"
+        }
+    except Exception as e:
+        print(f"❌ PDF ERROR: {e}")
+        traceback.print_exc()
+        raise HTTPException(500, str(e))
+
+@app.post("/generate-quiz")
+def generate_quiz():
+    if not chat_session: raise HTTPException(500, "Memory not initialized")
+    
+    prompt = "Based on our conversation and the document I uploaded, generate a 3-question multiple-choice quiz. Respond in valid JSON format ONLY. Structure: [{\"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": \"Correct Option Text\"}]"
+    
+    try:
+        response = chat_session.send_message(prompt)
+        raw_text = response.text
+        match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return []
+    except Exception as e:
+        print(f"❌ QUIZ ERROR: {e}")
+        return []
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
