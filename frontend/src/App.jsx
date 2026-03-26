@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Send, User, Bot, Loader2, Settings, Download, RotateCcw, Mic, MicOff } from 'lucide-react';
+import { Send, User, Bot, Loader2, Settings, Download, RotateCcw, Mic, MicOff, UploadCloud } from 'lucide-react';
 
 function App() {
   const [input, setInput] = useState('');
@@ -16,6 +16,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   const videoRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Fetch Config
   useEffect(() => {
@@ -63,6 +64,33 @@ function App() {
     }
   };
 
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.type !== "application/pdf") { alert("Only PDF files are supported!"); return; }
+    
+    setLoading(true);
+    setVideoUrl('loading');
+    
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const url = `http://127.0.0.1:8000/pdf-to-video?avatar_id=${selectedAvatar}&voice_id=${selectedVoice}`;
+      const response = await axios.post(url, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setChatHistory([...chatHistory, { type: 'user', text: `Uploaded PDF: ${file.name}` }, { type: 'bot', text: response.data.text }]);
+      setVideoUrl(`http://127.0.0.1:8000/get-video?t=${new Date().getTime()}`);
+    } catch (error) {
+      alert("Error: " + (error.response?.data?.detail || error.message));
+      setVideoUrl(null);
+    } finally {
+      setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   // Switch back to idle when video ends
   const handleVideoEnd = () => {
     setVideoUrl(null); 
@@ -85,9 +113,15 @@ function App() {
               </p>
             </div>
           </div>
-          <button onClick={() => setShowSettings(!showSettings)} className="p-2 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600">
-            <Settings size={20} />
-          </button>
+          <div className="flex gap-2">
+            <input type="file" accept=".pdf" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 p-2 px-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-medium shadow-md transition-colors" disabled={loading}>
+              <UploadCloud size={20} />
+            </button>
+            <button onClick={() => setShowSettings(!showSettings)} className="p-2 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600">
+              <Settings size={20} />
+            </button>
+          </div>
         </header>
 
         {/* Settings */}

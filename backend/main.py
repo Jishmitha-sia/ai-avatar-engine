@@ -1,5 +1,5 @@
-import os, sys, uvicorn, shutil, asyncio, time
-from fastapi import FastAPI, HTTPException
+import os, sys, uvicorn, shutil, asyncio, time, fitz
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles # <--- NEW IMPORT
 from fastapi.middleware.cors import CORSMiddleware
@@ -119,6 +119,52 @@ def get_video():
     path = f"{base_dir}/output_video.mp4"
     if os.path.exists(path): return FileResponse(path, media_type="video/mp4")
     raise HTTPException(404, "Video not found")
+
+@app.post("/pdf-to-video")
+async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voice_id: str = "en-US-JennyNeural"):
+    if not sprout_engine: raise HTTPException(500, "Engine not active")
+    if not sprout_engine.avatar_cache: raise HTTPException(500, "No avatars available")
+    
+    available_avatars = list(sprout_engine.avatar_cache.keys())
+    if not avatar_id: avatar_id = available_avatars[0]
+
+    try:
+        # Save temp PDF
+        temp_pdf = f"{base_dir}/temp_upload.pdf"
+        with open(temp_pdf, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Extract Text
+        doc = fitz.open(temp_pdf)
+        extracted_text = ""
+        for page in doc:
+            extracted_text += page.get_text()
+        doc.close()
+
+        if not extracted_text.strip():
+            raise HTTPException(400, "PDF contains no readable text.")
+
+        # Script Generation via Gemini
+        prompt = f"I am uploading a new document. Please read it, remember all the contents for our conversation, and respond right now ONLY with a highly engaging, 2-3 sentence summary speech script for a video presentation. Keep it conversational. Don't include stage directions or emojis:\n\n{extracted_text[:8000]}"
+        
+        if not chat_session: raise HTTPException(500, "Memory not initialized")
+        response = chat_session.send_message(prompt)
+        ai_script = response.text
+        
+        # TTS Audio
+        audio_path = f"{base_dir}/response.mp3"
+        communicate = edge_tts.Communicate(ai_script, voice_id)
+        await communicate.save(audio_path)
+        
+        # Audio-driven Avatar Generation
+        output_path = f"{base_dir}/output_video.mp4"
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
+        
+        return {"text": ai_script, "video_url": "http://127.0.0.1:8000/get-video"}
+    except Exception as e:
+        print(f"❌ PDF ERROR: {e}")
+        raise HTTPException(500, str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
