@@ -21,6 +21,7 @@ function App() {
   const [quizScore, setQuizScore] = useState(0);
   const [quizFinished, setQuizFinished] = useState(false);
   const [isWide, setIsWide] = useState(false); // <--- NEW TOGGLE
+  const [videoFinished, setVideoFinished] = useState(false); // <--- NEW STATE
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -63,6 +64,7 @@ function App() {
     
     // Switch to video mode immediately to show loading spinner
     setVideoUrl('loading'); 
+    setVideoFinished(false);
     
     try {
       const url = `http://127.0.0.1:8000/chat?user_query=${encodeURIComponent(query)}&avatar_id=${selectedAvatar}&voice_id=${selectedVoice}`;
@@ -70,6 +72,7 @@ function App() {
       setChatHistory([...chatHistory, { type: 'user', text: query }, { type: 'bot', text: response.data.text }]);
       if (response.data.concepts) setConcepts(response.data.concepts);
       setVideoUrl(`http://127.0.0.1:8000/get-video?t=${new Date().getTime()}`);
+      setVideoFinished(false);
       setInput('');
     } catch (error) {
       alert("Error: " + error.message);
@@ -108,7 +111,24 @@ function App() {
   };
 
   const handleVideoEnd = () => {
-    setVideoUrl(null); 
+    setVideoFinished(true);
+    // Removed setVideoUrl(null) to keep the video frame visible for replay
+  };
+
+  const replayVideo = () => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play();
+      setVideoFinished(false);
+    }
+  };
+
+  const downloadVideo = () => {
+    if (!videoUrl) return;
+    const a = document.createElement('a');
+    a.href = videoUrl;
+    a.download = `Sprout_Avatar_Video_${new Date().getTime()}.mp4`;
+    a.click();
   };
 
   const startQuiz = async () => {
@@ -205,12 +225,41 @@ function App() {
             
             {/* 1. TALKING STATE (Video) */}
             {videoUrl && videoUrl !== 'loading' && (
-              <video 
-                src={videoUrl} 
-                autoPlay 
-                onEnded={handleVideoEnd}
-                className="w-full h-full object-contain"
-              />
+              <div className="w-full h-full relative">
+                <video 
+                  ref={videoRef}
+                  src={videoUrl} 
+                  autoPlay 
+                  onEnded={handleVideoEnd}
+                  className="w-full h-full object-contain"
+                />
+                
+                {/* Video HUD Overlay (Replay / Download) */}
+                {videoFinished && (
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center gap-6 animate-in fade-in zoom-in duration-300">
+                    <button 
+                      onClick={replayVideo} 
+                      className="group flex flex-col items-center gap-2 p-4 bg-white/10 hover:bg-white/20 rounded-2xl border border-white/20 transition-all active:scale-95"
+                    >
+                      <RotateCcw className="text-white group-hover:rotate-[-45deg] transition-transform" size={32} />
+                      <span className="text-[10px] text-white font-bold uppercase tracking-widest">Replay</span>
+                    </button>
+                    <button 
+                      onClick={downloadVideo} 
+                      className="group flex flex-col items-center gap-2 p-4 bg-white/10 hover:bg-white/20 rounded-2xl border border-white/20 transition-all active:scale-95"
+                    >
+                      <Download className="text-white group-hover:translate-y-1 transition-transform" size={32} />
+                      <span className="text-[10px] text-white font-bold uppercase tracking-widest">Save Video</span>
+                    </button>
+                    <button 
+                      onClick={() => setVideoUrl(null)} 
+                      className="absolute top-4 right-4 p-2 text-white/50 hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* 2. LOADING STATE */}
