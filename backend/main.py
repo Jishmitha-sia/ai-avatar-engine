@@ -1,3 +1,4 @@
+
 import os, sys, uvicorn, shutil, asyncio, time, fitz
 from fastapi import FastAPI, HTTPException, UploadFile, File
 import traceback
@@ -10,8 +11,11 @@ import edge_tts
 
 # Paths
 base_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+# Wav2Lip Engine (Legacy)
 sys.path.append(os.path.join(base_dir, "Wav2Lip"))
 from Wav2Lip.sprout_engine import SproutEngine
+# SadTalker Engine (Lively)
+from sprout_sadtalker_engine import SproutSadTalkerEngine
 import json, re
 
 load_dotenv()
@@ -34,6 +38,8 @@ COST_INPUT_1M = 0.075
 COST_OUTPUT_1M = 0.30
 
 # --- CONFIGURATION ---
+ENGINE_TYPE = "sadtalker" # options: "sadtalker", "wav2lip"
+
 VOICES = [
     {"id": "en-US-JennyNeural", "name": "Jenny (Female US)", "gender": "Female"},
     {"id": "en-US-GuyNeural", "name": "Guy (Male US)", "gender": "Male"},
@@ -62,11 +68,16 @@ async def startup_event():
     print("🌱 STARTING SPROUT LIFE SERVER...")
     
     # 1. Initialize Engine
-    checkpoint = f"{base_dir}/Wav2Lip/checkpoints/wav2lip_gan.pth"
     try:
-        sprout_engine = SproutEngine(checkpoint, avatars_dir)
+        if ENGINE_TYPE == "sadtalker":
+            checkpoint_dir = f"{base_dir}/SadTalker/checkpoints"
+            sprout_engine = SproutSadTalkerEngine(checkpoint_dir, avatars_dir)
+        else:
+            checkpoint = f"{base_dir}/Wav2Lip/checkpoints/wav2lip_gan.pth"
+            sprout_engine = SproutEngine(checkpoint, avatars_dir)
     except Exception as e:
         print(f"❌ Engine Start Failed: {e}")
+        traceback.print_exc()
 
     # 2. Initialize Memory
     try:
@@ -81,10 +92,18 @@ async def startup_event():
 
 @app.get("/config")
 def get_config():
-    if not sprout_engine: return {"avatars": [], "voices": VOICES}
-    avatars = list(sprout_engine.avatar_cache.keys())
-    # Sort to ensure womantutor.jpg is first
+    # Get available avatar files from disk
+    all_avatars = [f for f in os.listdir(avatars_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    
+    # Use engine cache if available, otherwise use disk list
+    if sprout_engine and sprout_engine.avatar_cache:
+        avatars = list(sprout_engine.avatar_cache.keys())
+    else:
+        avatars = all_avatars
+
+    # Prioritize womantutor.jpg at the top of the list
     avatars.sort(key=lambda x: 0 if x == "womantutor.jpg" else 1)
+    
     return {"avatars": avatars, "voices": VOICES}
 
 @app.get("/reset-memory")

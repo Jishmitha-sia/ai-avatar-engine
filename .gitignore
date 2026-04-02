@@ -15,7 +15,17 @@ backend/Wav2Lip/checkpoints/
 # Generated Media & Temp Files
 backend/response.mp3
 backend/output_video.mp4
-backend/Wav2Lip/temp/*
+# SadTalker temporary folders
+backend/temp/
+backend/results/
+backend/temp_uploads/
+tmp/
+*.mat
+*.txt
+backend/SadTalker/checkpoints/
+backend/SadTalker/gfpgan/weights/
+_gen_*/*
+backend/temp_sadtalker_preproc/*
 **/__pycache__/
 *.pyc
 

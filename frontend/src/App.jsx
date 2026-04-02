@@ -11,7 +11,7 @@ function App() {
   // Voice & Settings State
   const [isListening, setIsListening] = useState(false);
   const [config, setConfig] = useState({ avatars: [], voices: [] });
-  const [selectedAvatar, setSelectedAvatar] = useState('');
+  const [selectedAvatar, setSelectedAvatar] = useState('womantutor.jpg');
   const [selectedVoice, setSelectedVoice] = useState('en-US-JennyNeural');
   const [showSettings, setShowSettings] = useState(false);
   const [concepts, setConcepts] = useState([]); // <--- NEW STATE FOR BOARD
@@ -38,7 +38,11 @@ function App() {
       } catch (err) { console.error("Config Error", err); }
     }
     fetchConfig();
-  }, []);
+    const interval = setInterval(() => {
+        if (config.avatars.length === 0) fetchConfig();
+    }, 5000); // Retry every 5s if list is empty (server still starting)
+    return () => clearInterval(interval);
+  }, [config.avatars.length]);
 
   // Voice Input
   const handleVoiceInput = () => {
@@ -175,8 +179,8 @@ function App() {
             <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 p-2 px-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-medium shadow-md transition-colors" disabled={loading}>
               <UploadCloud size={20} />
             </button>
-            <button onClick={() => setShowSettings(!showSettings)} className="p-2 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600">
-              <Settings size={20} />
+            <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-xl transition-all ${showSettings || config.avatars.length === 0 ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+              <Settings size={20} className={config.avatars.length === 0 ? 'animate-spin' : ''} />
             </button>
           </div>
         </header>
@@ -184,11 +188,11 @@ function App() {
         {/* Settings */}
         {showSettings && (
           <div className="bg-slate-900/50 p-4 border-b border-slate-700 flex gap-4 animate-in slide-in-from-top-2">
-            <select value={selectedAvatar} onChange={(e) => setSelectedAvatar(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600">
-              {config.avatars.map(av => <option key={av} value={av}>{av}</option>)}
+            <select value={selectedAvatar} onChange={(e) => setSelectedAvatar(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
+              {config.avatars.length === 0 ? <option value="">Loading avatars...</option> : config.avatars.map(av => <option key={av} value={av}>{av}</option>)}
             </select>
-            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600">
-              {config.voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
+              {config.voices.length === 0 ? <option value="">Loading voices...</option> : config.voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </div>
         )}
@@ -219,17 +223,18 @@ function App() {
               </div>
             )}
 
-            {/* 3. IDLE STATE (Breathing Image) */}
+            {/* 3. IDLE STATE (Lively Image) */}
             {(!videoUrl || videoUrl === 'loading') && selectedAvatar && (
-              <div className="w-full h-full flex items-center justify-center bg-gradient-to-b from-slate-800 to-black">
-                <img 
-                  src={`http://127.0.0.1:8000/avatars/${selectedAvatar}`} 
-                  alt="Avatar"
-                  className="max-h-full max-w-full object-contain animate-breathe filter brightness-90 hover:brightness-110 transition-all duration-500"
-                  style={{ 
-                    animation: "breathe 4s ease-in-out infinite"
-                  }} 
-                />
+              <div className="w-full h-full flex items-center justify-center bg-gradient-to-b from-slate-800 to-black overflow-hidden">
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <img 
+                    src={`http://127.0.0.1:8000/avatars/${selectedAvatar}`} 
+                    alt="Avatar"
+                    className="max-h-full max-w-full object-contain animate-idle filter brightness-90 hover:brightness-110 transition-all duration-700 shadow-2xl"
+                  />
+                  {/* Subtle Blink Overlay (Simulated) */}
+                  <div className="absolute inset-0 bg-black/5 animate-blink pointer-events-none" />
+                </div>
               </div>
             )}
 
@@ -354,11 +359,16 @@ function App() {
           </div>
         )}
 
-        {/* CSS Animation for Breathing */}
+        {/* CSS Animation for Lively Idle */}
         <style>{`
-          @keyframes breathe {
-            0%, 100% { transform: scale(1); opacity: 0.9; }
-            50% { transform: scale(1.02); opacity: 1; }
+          @keyframes idle {
+            0%, 100% { transform: scale(1) translateY(0) rotate(0deg); }
+            33% { transform: scale(1.01) translateY(-2px) rotate(0.1deg); }
+            66% { transform: scale(1.005) translateY(1px) rotate(-0.1deg); }
+          }
+          @keyframes blink {
+            0%, 96%, 100% { opacity: 0; }
+            97%, 99% { opacity: 0.3; }
           }
           @keyframes slideInRight {
             from { transform: translateX(30px); opacity: 0; }
@@ -368,8 +378,11 @@ function App() {
             from { opacity: 0; }
             to { opacity: 1; }
           }
-          .animate-breathe {
-            animation: breathe 4s ease-in-out infinite;
+          .animate-idle {
+            animation: idle 8s ease-in-out infinite;
+          }
+          .animate-blink {
+            animation: blink 4s infinite;
           }
           .animate-in {
             animation: fadeIn 0.5s ease-out forwards, slideInRight 0.5s ease-out forwards;
