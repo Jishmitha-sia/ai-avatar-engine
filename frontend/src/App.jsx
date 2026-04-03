@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Send, User, Bot, Loader2, Settings, Download, RotateCcw, Mic, MicOff, UploadCloud, DownloadCloud, Star, Maximize2, Minimize2 } from 'lucide-react';
+import { Send, User, Bot, Loader2, Settings, Download, RotateCcw, Mic, MicOff, UploadCloud, DownloadCloud, Star, Maximize2, Minimize2, Check, X } from 'lucide-react';
 
 function App() {
   const [input, setInput] = useState('');
@@ -11,7 +11,7 @@ function App() {
   // Voice & Settings State
   const [isListening, setIsListening] = useState(false);
   const [config, setConfig] = useState({ avatars: [], voices: [] });
-  const [selectedAvatar, setSelectedAvatar] = useState('');
+  const [selectedAvatar, setSelectedAvatar] = useState('womantutor.jpg');
   const [selectedVoice, setSelectedVoice] = useState('en-US-JennyNeural');
   const [showSettings, setShowSettings] = useState(false);
   const [concepts, setConcepts] = useState([]); // <--- NEW STATE FOR BOARD
@@ -20,7 +20,10 @@ function App() {
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [quizScore, setQuizScore] = useState(0);
   const [quizFinished, setQuizFinished] = useState(false);
+  const [selectedOption, setSelectedOption] = useState(null); // <--- NEW STATE
+  const [showAnswer, setShowAnswer] = useState(false); // <--- NEW STATE
   const [isWide, setIsWide] = useState(false); // <--- NEW TOGGLE
+  const [videoFinished, setVideoFinished] = useState(false); // <--- NEW STATE
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -38,7 +41,11 @@ function App() {
       } catch (err) { console.error("Config Error", err); }
     }
     fetchConfig();
-  }, []);
+    const interval = setInterval(() => {
+        if (config.avatars.length === 0) fetchConfig();
+    }, 5000); // Retry every 5s if list is empty (server still starting)
+    return () => clearInterval(interval);
+  }, [config.avatars.length]);
 
   // Voice Input
   const handleVoiceInput = () => {
@@ -59,6 +66,7 @@ function App() {
     
     // Switch to video mode immediately to show loading spinner
     setVideoUrl('loading'); 
+    setVideoFinished(false);
     
     try {
       const url = `http://127.0.0.1:8000/chat?user_query=${encodeURIComponent(query)}&avatar_id=${selectedAvatar}&voice_id=${selectedVoice}`;
@@ -66,6 +74,7 @@ function App() {
       setChatHistory([...chatHistory, { type: 'user', text: query }, { type: 'bot', text: response.data.text }]);
       if (response.data.concepts) setConcepts(response.data.concepts);
       setVideoUrl(`http://127.0.0.1:8000/get-video?t=${new Date().getTime()}`);
+      setVideoFinished(false);
       setInput('');
     } catch (error) {
       alert("Error: " + error.message);
@@ -104,7 +113,24 @@ function App() {
   };
 
   const handleVideoEnd = () => {
-    setVideoUrl(null); 
+    setVideoFinished(true);
+    // Removed setVideoUrl(null) to keep the video frame visible for replay
+  };
+
+  const replayVideo = () => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play();
+      setVideoFinished(false);
+    }
+  };
+
+  const downloadVideo = () => {
+    if (!videoUrl) return;
+    const a = document.createElement('a');
+    a.href = videoUrl;
+    a.download = `Sprout_Avatar_Video_${new Date().getTime()}.mp4`;
+    a.click();
   };
 
   const startQuiz = async () => {
@@ -115,6 +141,8 @@ function App() {
         setQuizData(res.data);
         setCurrentQuizIndex(0);
         setQuizScore(0);
+        setSelectedOption(null);
+        setShowAnswer(false);
         setShowQuiz(true);
       } else {
         alert("Not enough context yet. Chat more or upload a PDF!");
@@ -124,8 +152,19 @@ function App() {
   };
 
   const handleQuizAnswer = (selected) => {
-    const isCorrect = selected === quizData[currentQuizIndex].answer;
+    if (showAnswer) return; // Prevent double clicking
+    
+    setSelectedOption(selected);
+    setShowAnswer(true);
+    
+    const normalize = (s) => s.replace(/^[A-Z1-9][.)]\s*/i, '').trim().toLowerCase();
+    const isCorrect = normalize(selected) === normalize(quizData[currentQuizIndex].answer);
     if (isCorrect) setQuizScore(quizScore + 1);
+  };
+
+  const handleNextQuestion = () => {
+    setShowAnswer(false);
+    setSelectedOption(null);
     
     if (currentQuizIndex + 1 < quizData.length) {
       setCurrentQuizIndex(currentQuizIndex + 1);
@@ -175,8 +214,8 @@ function App() {
             <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 p-2 px-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-medium shadow-md transition-colors" disabled={loading}>
               <UploadCloud size={20} />
             </button>
-            <button onClick={() => setShowSettings(!showSettings)} className="p-2 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600">
-              <Settings size={20} />
+            <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-xl transition-all ${showSettings || config.avatars.length === 0 ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+              <Settings size={20} className={config.avatars.length === 0 ? 'animate-spin' : ''} />
             </button>
           </div>
         </header>
@@ -184,11 +223,11 @@ function App() {
         {/* Settings */}
         {showSettings && (
           <div className="bg-slate-900/50 p-4 border-b border-slate-700 flex gap-4 animate-in slide-in-from-top-2">
-            <select value={selectedAvatar} onChange={(e) => setSelectedAvatar(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600">
-              {config.avatars.map(av => <option key={av} value={av}>{av}</option>)}
+            <select value={selectedAvatar} onChange={(e) => setSelectedAvatar(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
+              {config.avatars.length === 0 ? <option value="">Loading avatars...</option> : config.avatars.map(av => <option key={av} value={av}>{av}</option>)}
             </select>
-            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600">
-              {config.voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
+              {config.voices.length === 0 ? <option value="">Loading voices...</option> : config.voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </div>
         )}
@@ -201,12 +240,41 @@ function App() {
             
             {/* 1. TALKING STATE (Video) */}
             {videoUrl && videoUrl !== 'loading' && (
-              <video 
-                src={videoUrl} 
-                autoPlay 
-                onEnded={handleVideoEnd}
-                className="w-full h-full object-contain"
-              />
+              <div className="w-full h-full relative">
+                <video 
+                  ref={videoRef}
+                  src={videoUrl} 
+                  autoPlay 
+                  onEnded={handleVideoEnd}
+                  className="w-full h-full object-contain"
+                />
+                
+                {/* Video HUD Overlay (Replay / Download) */}
+                {videoFinished && (
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center gap-6 animate-in fade-in zoom-in duration-300">
+                    <button 
+                      onClick={replayVideo} 
+                      className="group flex flex-col items-center gap-2 p-4 bg-white/10 hover:bg-white/20 rounded-2xl border border-white/20 transition-all active:scale-95"
+                    >
+                      <RotateCcw className="text-white group-hover:rotate-[-45deg] transition-transform" size={32} />
+                      <span className="text-[10px] text-white font-bold uppercase tracking-widest">Replay</span>
+                    </button>
+                    <button 
+                      onClick={downloadVideo} 
+                      className="group flex flex-col items-center gap-2 p-4 bg-white/10 hover:bg-white/20 rounded-2xl border border-white/20 transition-all active:scale-95"
+                    >
+                      <Download className="text-white group-hover:translate-y-1 transition-transform" size={32} />
+                      <span className="text-[10px] text-white font-bold uppercase tracking-widest">Save Video</span>
+                    </button>
+                    <button 
+                      onClick={() => setVideoUrl(null)} 
+                      className="absolute top-4 right-4 p-2 text-white/50 hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* 2. LOADING STATE */}
@@ -219,17 +287,18 @@ function App() {
               </div>
             )}
 
-            {/* 3. IDLE STATE (Breathing Image) */}
+            {/* 3. IDLE STATE (Lively Image) */}
             {(!videoUrl || videoUrl === 'loading') && selectedAvatar && (
-              <div className="w-full h-full flex items-center justify-center bg-gradient-to-b from-slate-800 to-black">
-                <img 
-                  src={`http://127.0.0.1:8000/avatars/${selectedAvatar}`} 
-                  alt="Avatar"
-                  className="max-h-full max-w-full object-contain animate-breathe filter brightness-90 hover:brightness-110 transition-all duration-500"
-                  style={{ 
-                    animation: "breathe 4s ease-in-out infinite"
-                  }} 
-                />
+              <div className="w-full h-full flex items-center justify-center bg-gradient-to-b from-slate-800 to-black overflow-hidden">
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <img 
+                    src={`http://127.0.0.1:8000/avatars/${selectedAvatar}`} 
+                    alt="Avatar"
+                    className="max-h-full max-w-full object-contain animate-idle filter brightness-90 hover:brightness-110 transition-all duration-700 shadow-2xl"
+                  />
+                  {/* Subtle Blink Overlay (Simulated) */}
+                  <div className="absolute inset-0 bg-black/5 animate-blink pointer-events-none" />
+                </div>
               </div>
             )}
 
@@ -324,16 +393,50 @@ function App() {
                   </div>
                   <h2 className="text-xl font-bold text-white mb-8 leading-tight text-left">{quizData[currentQuizIndex].question}</h2>
                   <div className="space-y-3">
-                    {quizData[currentQuizIndex].options.map((opt, i) => (
-                      <button 
-                        key={i} 
-                        onClick={() => handleQuizAnswer(opt)}
-                        className="w-full text-left p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-200 text-sm transition-all active:scale-95"
-                      >
-                        {opt}
-                      </button>
-                    ))}
+                    {quizData[currentQuizIndex].options.map((opt, i) => {
+                      const normalize = (s) => s.replace(/^[A-Z1-9][.)]\s*/i, '').trim().toLowerCase();
+                      const isCorrect = normalize(opt) === normalize(quizData[currentQuizIndex].answer);
+                      const isSelected = opt === selectedOption;
+                      
+                      let buttonClass = "w-full text-left p-4 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 text-sm transition-all ";
+                      
+                      if (!showAnswer) {
+                        buttonClass += "hover:bg-slate-700 active:scale-95";
+                      } else {
+                        if (isCorrect) {
+                          buttonClass = "w-full text-left p-4 bg-green-500/20 border-green-500 text-green-400 rounded-xl text-sm transition-all font-bold";
+                        } else if (isSelected) {
+                          buttonClass = "w-full text-left p-4 bg-red-500/20 border-red-500 text-red-400 rounded-xl text-sm transition-all";
+                        } else {
+                          buttonClass += "opacity-40 grayscale";
+                        }
+                      }
+
+                      return (
+                        <button 
+                          key={i} 
+                          disabled={showAnswer}
+                          onClick={() => handleQuizAnswer(opt)}
+                          className={buttonClass}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span>{opt}</span>
+                            {showAnswer && isCorrect && <Check size={16} />}
+                            {showAnswer && isSelected && !isCorrect && <X size={16} />}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
+
+                  {showAnswer && (
+                    <button 
+                      onClick={handleNextQuestion}
+                      className="w-full mt-6 p-4 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold animate-in bounce-in duration-300"
+                    >
+                      {currentQuizIndex + 1 < quizData.length ? "Next Question" : "See Final Score"}
+                    </button>
+                  )}
                 </>
               ) : (
                 <div className="py-6">
@@ -354,11 +457,16 @@ function App() {
           </div>
         )}
 
-        {/* CSS Animation for Breathing */}
+        {/* CSS Animation for Lively Idle */}
         <style>{`
-          @keyframes breathe {
-            0%, 100% { transform: scale(1); opacity: 0.9; }
-            50% { transform: scale(1.02); opacity: 1; }
+          @keyframes idle {
+            0%, 100% { transform: scale(1) translateY(0) rotate(0deg); }
+            33% { transform: scale(1.01) translateY(-2px) rotate(0.1deg); }
+            66% { transform: scale(1.005) translateY(1px) rotate(-0.1deg); }
+          }
+          @keyframes blink {
+            0%, 96%, 100% { opacity: 0; }
+            97%, 99% { opacity: 0.3; }
           }
           @keyframes slideInRight {
             from { transform: translateX(30px); opacity: 0; }
@@ -368,8 +476,11 @@ function App() {
             from { opacity: 0; }
             to { opacity: 1; }
           }
-          .animate-breathe {
-            animation: breathe 4s ease-in-out infinite;
+          .animate-idle {
+            animation: idle 8s ease-in-out infinite;
+          }
+          .animate-blink {
+            animation: blink 4s infinite;
           }
           .animate-in {
             animation: fadeIn 0.5s ease-out forwards, slideInRight 0.5s ease-out forwards;

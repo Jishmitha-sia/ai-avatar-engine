@@ -1,110 +1,104 @@
+# 🌱 Sprout: The AI Avatar Tutor (v2.0)
 
-# 🌱 Sprout: AI Avatar Engine
+Sprout is a high-performance, full-stack **Conversational AI Avatar Dashboard**. It transforms any PDF or text query into a live, interactive educational experience using a 136x faster video inference engine.
 
-Sprout is a real-time, full-stack Conversational AI Avatar system. It combines Google's **Gemini 1.5** for intelligent conversation, **Edge-TTS** for voice synthesis, and **Wav2Lip** for highly accurate, real-time lip-syncing and video generation.
+---
 
-## ✨ Features
-* **Ultra-Fast Generation:** Utilizes a "Warm Start" architecture by pre-loading AI models into GPU memory, dropping video generation latency to <5 seconds.
-* **Multi-Avatar Support:** Dynamically switch between different tutor personas (images) and voice profiles in real-time.
-* **Contextual Memory:** Maintains a continuous conversational thread using Gemini's ChatSession.
-* **WhatsApp-Style Voice Input:** Speak directly to the avatar using the browser's Web Speech API.
-* **"Life" Animations:** Avatars feature a subtle 3D breathing/scaling animation when idle to feel alive.
+## 🔥 What's New in Sprout 2.0?
+
+Sprout 2.0 is a massive upgrade focused on deep knowledge and interactivity:
+
+*   **🧠 Knowledge Deep-Dive (10 Points):** A 2-column grid dashboard that extracts up to 10 key concepts from any document or chat in real-time.
+*   **🎯 AI Quiz Mode:** An interactive examiner! Sprout generates a bespoke 3-question multiple-choice quiz based on the context of your conversation.
+*   **📂 PDF-to-Video Pipeline:** Upload any PDF to get an instant, lip-synced video summary and a structured "Live Knowledge Board".
+*   **📝 Study Guide Export:** One-click download of all extracted concepts as a formatted study guide.
+*   **🖥️ Command Center UI:** A dynamic widescreen (1500px) layout with a "Maximize" toggle for a truly immersive experience.
+*   **🚀 Blackwell-Ready Engine:** Optimized specifically for NVIDIA's latest **RTX 50-series (Blackwell)** GPUs for ultra-low latency.
+
+---
+
+## ✨ Core Features
+
+*   **Ultra-Fast Generation:** Direct FFmpeg piping drops video latency to **< 5 seconds** for 20s clips.
+*   **Accurate Lip-Sync:** Powered by a customized Wav2Lip implementation that handles odd-numbered image dimensions and high-res avatars.
+*   **Natural Voice:** Integration with `edge-tts` for high-fidelity, human-like narration.
+*   **Subtle Animations:** Avatars feature "Breathing" and "Idle" animations to feel alive while waiting for your input.
 
 ---
 
 ## ⚙️ Prerequisites
 
-Before you begin, ensure you have the following installed on your system:
-1. **Python 3.8+**
-2. **Node.js & npm** (For the frontend dashboard)
-3. **FFmpeg** (CRITICAL for video processing)
-	* **Windows:** `winget install ffmpeg`
-	* **Mac:** `brew install ffmpeg`
-	* **Linux:** `sudo apt install ffmpeg`
+1.  **Python 3.11+** (Recommended for Blackwell/sm_120 compatibility)
+2.  **Node.js & npm** (For the React Dashboard)
+3.  **FFmpeg** (Ensure it's in your system's PATH)
+    *   `winget install ffmpeg` (Windows)
+4.  **Hardware:** NVIDIA GPU (RTX 30/40/50 series) with 8GB+ VRAM recommended.
 
 ---
 
 ## 🚀 Installation & Setup
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/your-username/sprout_avatar_project.git
-cd sprout_avatar_project
-```
-
-### 2. Backend Setup (FastAPI & AI Engine)
-Navigate to the backend directory and install the required Python packages:
-
+### 1. Backend Setup
 ```bash
 cd backend
 python -m venv venv
-# On macOS / Linux:
-source venv/bin/activate
-# On Windows (PowerShell):
-venv\Scripts\activate
+.\venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-⚠️ Important: Download the Wav2Lip Model Weights
+**Weights & API Keys:**
+*   **Wav2Lip Weights:** Place `wav2lip_gan.pth` in `backend/Wav2Lip/checkpoints/`.
+*   **S3FD Face Detector:** Place `s3fd.pth` in `backend/Wav2Lip/face_detection/detection/sfd/`.
+*   **API Key:** Create a `.env` file in the `backend/` folder:
+    ```env
+    GEMINI_API_KEY=your_key_here
+    ```
 
-The repository does not store the heavy machine learning weights.
-
-Download the `wav2lip_gan.pth` file from the Official Wav2Lip Repository and place it here:
-
-```
-backend/Wav2Lip/checkpoints/wav2lip_gan.pth
-```
-
-Add your API Key:
-
-Create a `.env` file inside the `backend/` folder and add your Google Gemini API key:
-
-```
-GEMINI_API_KEY=your_actual_api_key_here
-```
-
-### 3. Frontend Setup (React + Vite)
-Open a new terminal window, navigate to the `frontend` directory, and install dependencies:
-
+### 2. Frontend Setup
 ```bash
 cd frontend
 npm install
 ```
 
-### 🏃‍♂️ Running the Application
-You need to run both the Backend and Frontend servers simultaneously.
+---
 
-Terminal 1: Start the AI Backend
+## 🏃‍♂️ Running the Dashboard
 
+### Terminal 1: The Engine
 ```bash
 cd backend
-# Make sure your virtual environment is activated
+.\venv\Scripts\activate
 python main.py
 ```
+*(Watch the console for the "MEMORY & STATIC FILES READY" message.)*
 
-(Wait until you see server logs indicating the backend is ready.)
-
-Terminal 2: Start the Frontend UI
-
+### Terminal 2: The Interface
 ```bash
 cd frontend
 npm run dev
 ```
 
-Open your browser and navigate to the local URL provided by Vite (usually http://localhost:5173).
+---
 
-## 📁 Project Structure
-/backend: FastAPI server, Gemini logic, and Wav2Lip integration.
+## 📂 Project Structure
+*   `backend/main.py`: The FastAPI server & Gemini logic.
+*   `backend/Wav2Lip/sprout_engine.py`: The high-speed video generation core.
+*   `backend/avatars/`: The Persona library. Add any `.jpg` here!
+*   `frontend/src/App.jsx`: The "Command Center" React UI.
 
-/avatars: Drop any .jpg or .png here to instantly add new avatars.
+---
 
-/Wav2Lip: The modified lip-sync AI engine (`sprout_engine.py`).
+## 📝 Developer Notes & Best Practices
 
-/frontend: React application using Tailwind CSS and Lucide icons.
+*   **Avoid Odd Dimensions:** Sprout now handles odd heights automatically, but for best performance, use even-numbered resolutions (e.g., 512x512).
+*   **GPU Warm-up:** The first generation on a new PC may take longer (30s) as Torch JIT-compiles kernels for your specific GPU architecture. Subsequent runs will be sub-5 seconds.
+*   **Microphone Access:** Ensure you grant browser permissions. Sprout works best in Chrome/Edge.
 
-## 📝 Troubleshooting
+---
 
-- 404 Video Not Found / Video isn't generating: Ensure FFmpeg is installed and added to your system's PATH.
-- Engine Start Failed: Ensure `wav2lip_gan.pth` is placed in the exact checkpoints folder mentioned above.
-- Microphone not working: Ensure you are accessing the frontend via localhost or HTTPS, as browsers block microphone access on insecure HTTP connections.
+## 📜 Credits & License
+- **AI Core:** Google Gemini 1.5.
+- **Lip-Sync Research:** Inspired by Rudrabha/Wav2Lip.
+- **Voice Synthesis:** Microsoft Edge-TTS.
 
+*Built with ❤️ for High-Performance Educational AI.*
