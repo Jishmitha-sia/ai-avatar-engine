@@ -23,6 +23,7 @@ function App() {
   const [selectedOption, setSelectedOption] = useState(null); // <--- NEW STATE
   const [showAnswer, setShowAnswer] = useState(false); // <--- NEW STATE
   const [isWide, setIsWide] = useState(false); // <--- NEW TOGGLE
+  const [selectedLanguage, setSelectedLanguage] = useState('en'); // <--- NEW STATE
   const [videoFinished, setVideoFinished] = useState(false); // <--- NEW STATE
 
   const videoRef = useRef(null);
@@ -34,25 +35,33 @@ function App() {
       try {
         const res = await axios.get('http://127.0.0.1:8000/config');
         setConfig(res.data);
+        
         if (res.data.avatars.length > 0) {
           const defaultAv = res.data.avatars.find(a => a === "womantutor.jpg") || res.data.avatars[0];
           setSelectedAvatar(defaultAv);
+        }
+        
+        // Match default voice to language if not set
+        if (res.data.voices && res.data.voices.length > 0) {
+           const langVoice = res.data.voices.find(v => v.lang === selectedLanguage);
+           if (langVoice) setSelectedVoice(langVoice.id);
         }
       } catch (err) { console.error("Config Error", err); }
     }
     fetchConfig();
     const interval = setInterval(() => {
-        if (config.avatars.length === 0) fetchConfig();
+        if (!config.avatars || config.avatars.length === 0) fetchConfig();
     }, 5000); // Retry every 5s if list is empty (server still starting)
     return () => clearInterval(interval);
-  }, [config.avatars.length]);
+  }, [config.avatars?.length, selectedLanguage]);
 
   // Voice Input
   const handleVoiceInput = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) { alert("Browser not supported"); return; }
     const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
+    const langLocales = { en: 'en-US', es: 'es-ES', fr: 'fr-FR', hi: 'hi-IN', zh: 'zh-CN', de: 'de-DE' };
+    recognition.lang = langLocales[selectedLanguage] || 'en-US';
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
     recognition.onresult = (e) => setInput(e.results[0][0].transcript);
@@ -69,7 +78,7 @@ function App() {
     setVideoFinished(false);
     
     try {
-      const url = `http://127.0.0.1:8000/chat?user_query=${encodeURIComponent(query)}&avatar_id=${selectedAvatar}&voice_id=${selectedVoice}`;
+      const url = `http://127.0.0.1:8000/chat?user_query=${encodeURIComponent(query)}&avatar_id=${selectedAvatar}&voice_id=${selectedVoice}&language=${selectedLanguage}`;
       const response = await axios.post(url);
       setChatHistory([...chatHistory, { type: 'user', text: query }, { type: 'bot', text: response.data.text }]);
       if (response.data.concepts) setConcepts(response.data.concepts);
@@ -96,7 +105,7 @@ function App() {
     formData.append('file', file);
 
     try {
-      const url = `http://127.0.0.1:8000/pdf-to-video?avatar_id=${selectedAvatar}&voice_id=${selectedVoice}`;
+      const url = `http://127.0.0.1:8000/pdf-to-video?avatar_id=${selectedAvatar}&voice_id=${selectedVoice}&language=${selectedLanguage}`;
       const response = await axios.post(url, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
@@ -222,13 +231,36 @@ function App() {
 
         {/* Settings */}
         {showSettings && (
-          <div className="bg-slate-900/50 p-4 border-b border-slate-700 flex gap-4 animate-in slide-in-from-top-2">
-            <select value={selectedAvatar} onChange={(e) => setSelectedAvatar(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
-              {config.avatars.length === 0 ? <option value="">Loading avatars...</option> : config.avatars.map(av => <option key={av} value={av}>{av}</option>)}
-            </select>
-            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="flex-1 bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
-              {config.voices.length === 0 ? <option value="">Loading voices...</option> : config.voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
+          <div className="bg-slate-900/50 p-4 border-b border-slate-700 grid grid-cols-1 sm:grid-cols-3 gap-4 animate-in slide-in-from-top-2">
+            {/* Language Selection */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] uppercase font-bold text-slate-500">Language</label>
+              <select 
+                value={selectedLanguage} 
+                onChange={(e) => setSelectedLanguage(e.target.value)} 
+                className="w-full bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500"
+              >
+                {config.languages?.map(lang => <option key={lang.id} value={lang.id}>{lang.name}</option>)}
+              </select>
+            </div>
+            
+            {/* Avatar Selection */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] uppercase font-bold text-slate-500">Avatar</label>
+              <select value={selectedAvatar} onChange={(e) => setSelectedAvatar(e.target.value)} className="w-full bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
+                {config.avatars.length === 0 ? <option value="">Loading...</option> : config.avatars.map(av => <option key={av} value={av}>{av}</option>)}
+              </select>
+            </div>
+
+            {/* Voice Selection */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] uppercase font-bold text-slate-500">Voice</label>
+              <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="w-full bg-slate-800 text-white text-sm rounded-lg p-2 border border-slate-600 outline-none focus:border-green-500">
+                {config.voices?.filter(v => v.lang === selectedLanguage).map(v => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
 

@@ -40,12 +40,28 @@ COST_OUTPUT_1M = 0.30
 # --- CONFIGURATION ---
 ENGINE_TYPE = "sadtalker" # options: "sadtalker", "wav2lip"
 
+LANGUAGES = [
+    {"id": "en", "name": "English", "system": "Answer in 1–2 short sentences in English."},
+    {"id": "es", "name": "Spanish", "system": "Responde en 1 o 2 frases cortas en Español."},
+    {"id": "fr", "name": "French", "system": "Répondez en 1 ou 2 phrases courtes en Français."},
+    {"id": "hi", "name": "Hindi", "system": "हिंदी में 1-2 छोटे वाक्यों में उत्तर दें।"},
+    {"id": "zh", "name": "Chinese", "system": "用1-2张短句中文回答。"},
+    {"id": "de", "name": "German", "system": "Antworten Sie in 1-2 kurzen Sätzen auf Deutsch."}
+]
+
 VOICES = [
-    {"id": "en-US-JennyNeural", "name": "Jenny (Female US)", "gender": "Female"},
-    {"id": "en-US-GuyNeural", "name": "Guy (Male US)", "gender": "Male"},
-    {"id": "en-GB-SoniaNeural", "name": "Sonia (Female UK)", "gender": "Female"},
-    {"id": "en-US-ChristopherNeural", "name": "Christopher (Deep/Calm)", "gender": "Male"},
-    {"id": "en-US-RogerNeural", "name": "Roger (Strong Bass)", "gender": "Male"}
+    {"id": "en-US-JennyNeural", "name": "Jenny (US)", "gender": "Female", "lang": "en"},
+    {"id": "en-US-GuyNeural", "name": "Guy (US)", "gender": "Male", "lang": "en"},
+    {"id": "en-GB-SoniaNeural", "name": "Sonia (UK)", "gender": "Female", "lang": "en"},
+    {"id": "es-ES-ElviraNeural", "name": "Elvira (ES)", "gender": "Female", "lang": "es"},
+    {"id": "es-MX-DaliaNeural", "name": "Dalia (MX)", "gender": "Female", "lang": "es"},
+    {"id": "fr-FR-DeniseNeural", "name": "Denise (FR)", "gender": "Female", "lang": "fr"},
+    {"id": "fr-FR-HenriNeural", "name": "Henri (FR)", "gender": "Male", "lang": "fr"},
+    {"id": "hi-IN-MadhurNeural", "name": "Madhur (IN)", "gender": "Male", "lang": "hi"},
+    {"id": "hi-IN-SwararaNeural", "name": "Swarara (IN)", "gender": "Female", "lang": "hi"},
+    {"id": "zh-CN-XiaoxiaoNeural", "name": "Xiaoxiao (CN)", "gender": "Female", "lang": "zh"},
+    {"id": "zh-CN-YunxiNeural", "name": "Yunxi (CN)", "gender": "Male", "lang": "zh"},
+    {"id": "de-DE-KatjaNeural", "name": "Katja (DE)", "gender": "Female", "lang": "de"}
 ]
 
 def get_best_model():
@@ -104,7 +120,11 @@ def get_config():
     # Prioritize womantutor.jpg at the top of the list
     avatars.sort(key=lambda x: 0 if x == "womantutor.jpg" else 1)
     
-    return {"avatars": avatars, "voices": VOICES}
+    return {
+        "avatars": avatars, 
+        "voices": VOICES,
+        "languages": LANGUAGES
+    }
 
 @app.get("/reset-memory")
 def reset_memory():
@@ -114,15 +134,23 @@ def reset_memory():
     return {"message": "Memory cleared"}
 
 @app.post("/chat")
-async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-JennyNeural"):
+async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-JennyNeural", language: str = "en"):
     if not sprout_engine: raise HTTPException(500, "Engine not active")
     if not chat_session: raise HTTPException(500, "Memory not initialized")
-    if not avatar_id: avatar_id = list(sprout_engine.avatar_cache.keys())[0]
+    
+    if not avatar_id:
+        available_avatars = list(sprout_engine.avatar_cache.keys())
+        avatar_id = available_avatars[0] if available_avatars else None
+
+    # Get language config
+    lang_info = next((l for l in LANGUAGES if l["id"] == language), LANGUAGES[0])
 
     try:
-        print(f"   💬 Query: {user_query}")
+        print(f"   💬 Query ({language}): {user_query}")
         print("   🧠 Asking Gemini...")
-        prompt = user_query + "\n\nIMPORTANT: You must respond in valid JSON format ONLY. Do not include markdown code blocks. Structure: {\"text\": \"your concise response\", \"concepts\": [{\"title\": \"Key Term\", \"explanation\": \"1-sentence detail\"}]}. Provide up to 10 concepts if the topic is complex."
+        
+        # Injected system instruction for multi-lingual JSON format
+        prompt = user_query + f"\n\nIMPORTANT: {lang_info['system']}. You must respond in valid JSON format ONLY. Structure: {{\"text\": \"your concise response in {lang_info['name']}\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. All fields must be in {lang_info['name']}."
         
         response = chat_session.send_message(prompt)
         raw_text = response.text
@@ -173,7 +201,7 @@ def get_video():
     raise HTTPException(404, "Video not found")
 
 @app.post("/pdf-to-video")
-async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voice_id: str = "en-US-JennyNeural"):
+async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voice_id: str = "en-US-JennyNeural", language: str = "en"):
     if not sprout_engine: raise HTTPException(500, "Engine not active")
     if not sprout_engine.avatar_cache: raise HTTPException(500, "No avatars available")
     
@@ -197,7 +225,8 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
             raise HTTPException(400, "PDF contains no readable text.")
 
         # Script Generation via Gemini
-        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"3 short sentences (max 60 words) engaging summary script\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. Provide at least 8-10 comprehensive key concepts from the document. Document summary:\n\n{extracted_text[:8000]}"
+        lang_info = next((l for l in LANGUAGES if l["id"] == language), LANGUAGES[0])
+        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"3 short sentences (max 60 words) engaging summary script in {lang_info['name']}\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. IMPORTANT: The summary AND all concepts MUST be in {lang_info['name']}. Document summary:\n\n{extracted_text[:8000]}"
         
         if not chat_session: raise HTTPException(500, "Memory not initialized")
         response = chat_session.send_message(prompt)
