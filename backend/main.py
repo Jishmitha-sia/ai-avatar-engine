@@ -241,7 +241,7 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
 def generate_quiz():
     if not chat_session: raise HTTPException(500, "Memory not initialized")
     
-    prompt = "Based on our conversation and the document I uploaded, generate a 3-question multiple-choice quiz. Respond in valid JSON format ONLY. Structure: [{\"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": \"Correct Option Text\"}]"
+    prompt = "Based on our conversation and the document I uploaded, generate a 3-question multiple-choice quiz. Respond in valid JSON format ONLY. IMPORTANT: The 'answer' value MUST be an EXACT, character-for-character match with one of the strings in the 'options' list. Structure: [{\"question\": \"...\", \"options\": [\"A. Option\", \"B. Option\", \"...\"], \"answer\": \"Exact Option String\"}]"
     
     try:
         response = chat_session.send_message(prompt)

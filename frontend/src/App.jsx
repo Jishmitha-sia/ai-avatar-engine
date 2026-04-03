@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Send, User, Bot, Loader2, Settings, Download, RotateCcw, Mic, MicOff, UploadCloud, DownloadCloud, Star, Maximize2, Minimize2 } from 'lucide-react';
+import { Send, User, Bot, Loader2, Settings, Download, RotateCcw, Mic, MicOff, UploadCloud, DownloadCloud, Star, Maximize2, Minimize2, Check, X } from 'lucide-react';
 
 function App() {
   const [input, setInput] = useState('');
@@ -20,6 +20,8 @@ function App() {
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [quizScore, setQuizScore] = useState(0);
   const [quizFinished, setQuizFinished] = useState(false);
+  const [selectedOption, setSelectedOption] = useState(null); // <--- NEW STATE
+  const [showAnswer, setShowAnswer] = useState(false); // <--- NEW STATE
   const [isWide, setIsWide] = useState(false); // <--- NEW TOGGLE
   const [videoFinished, setVideoFinished] = useState(false); // <--- NEW STATE
 
@@ -139,6 +141,8 @@ function App() {
         setQuizData(res.data);
         setCurrentQuizIndex(0);
         setQuizScore(0);
+        setSelectedOption(null);
+        setShowAnswer(false);
         setShowQuiz(true);
       } else {
         alert("Not enough context yet. Chat more or upload a PDF!");
@@ -148,8 +152,19 @@ function App() {
   };
 
   const handleQuizAnswer = (selected) => {
-    const isCorrect = selected === quizData[currentQuizIndex].answer;
+    if (showAnswer) return; // Prevent double clicking
+    
+    setSelectedOption(selected);
+    setShowAnswer(true);
+    
+    const normalize = (s) => s.replace(/^[A-Z1-9][.)]\s*/i, '').trim().toLowerCase();
+    const isCorrect = normalize(selected) === normalize(quizData[currentQuizIndex].answer);
     if (isCorrect) setQuizScore(quizScore + 1);
+  };
+
+  const handleNextQuestion = () => {
+    setShowAnswer(false);
+    setSelectedOption(null);
     
     if (currentQuizIndex + 1 < quizData.length) {
       setCurrentQuizIndex(currentQuizIndex + 1);
@@ -378,16 +393,50 @@ function App() {
                   </div>
                   <h2 className="text-xl font-bold text-white mb-8 leading-tight text-left">{quizData[currentQuizIndex].question}</h2>
                   <div className="space-y-3">
-                    {quizData[currentQuizIndex].options.map((opt, i) => (
-                      <button 
-                        key={i} 
-                        onClick={() => handleQuizAnswer(opt)}
-                        className="w-full text-left p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-200 text-sm transition-all active:scale-95"
-                      >
-                        {opt}
-                      </button>
-                    ))}
+                    {quizData[currentQuizIndex].options.map((opt, i) => {
+                      const normalize = (s) => s.replace(/^[A-Z1-9][.)]\s*/i, '').trim().toLowerCase();
+                      const isCorrect = normalize(opt) === normalize(quizData[currentQuizIndex].answer);
+                      const isSelected = opt === selectedOption;
+                      
+                      let buttonClass = "w-full text-left p-4 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 text-sm transition-all ";
+                      
+                      if (!showAnswer) {
+                        buttonClass += "hover:bg-slate-700 active:scale-95";
+                      } else {
+                        if (isCorrect) {
+                          buttonClass = "w-full text-left p-4 bg-green-500/20 border-green-500 text-green-400 rounded-xl text-sm transition-all font-bold";
+                        } else if (isSelected) {
+                          buttonClass = "w-full text-left p-4 bg-red-500/20 border-red-500 text-red-400 rounded-xl text-sm transition-all";
+                        } else {
+                          buttonClass += "opacity-40 grayscale";
+                        }
+                      }
+
+                      return (
+                        <button 
+                          key={i} 
+                          disabled={showAnswer}
+                          onClick={() => handleQuizAnswer(opt)}
+                          className={buttonClass}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span>{opt}</span>
+                            {showAnswer && isCorrect && <Check size={16} />}
+                            {showAnswer && isSelected && !isCorrect && <X size={16} />}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
+
+                  {showAnswer && (
+                    <button 
+                      onClick={handleNextQuestion}
+                      className="w-full mt-6 p-4 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold animate-in bounce-in duration-300"
+                    >
+                      {currentQuizIndex + 1 < quizData.length ? "Next Question" : "See Final Score"}
+                    </button>
+                  )}
                 </>
               ) : (
                 <div className="py-6">
