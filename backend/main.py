@@ -197,7 +197,7 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
             raise HTTPException(400, "PDF contains no readable text.")
 
         # Script Generation via Gemini
-        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"2-3 sentence engaging summary script\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. Provide at least 8-10 comprehensive key concepts from the document. Document summary:\n\n{extracted_text[:8000]}"
+        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"3 short sentences (max 60 words) engaging summary script\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. Provide at least 8-10 comprehensive key concepts from the document. Document summary:\n\n{extracted_text[:8000]}"
         
         if not chat_session: raise HTTPException(500, "Memory not initialized")
         response = chat_session.send_message(prompt)

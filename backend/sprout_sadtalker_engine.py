@@ -28,7 +28,7 @@ class SproutSadTalkerEngine:
         
         # Initialize paths
         config_dir = os.path.join(SADTALKER_PATH, 'src', 'config')
-        self.sadtalker_paths = init_path(checkpoint_dir, config_dir, size=size, old_version=False, preprocess='crop')
+        self.sadtalker_paths = init_path(checkpoint_dir, config_dir, size=size, old_version=False, preprocess='extcrop')
         
         # Initialize models
         print("📦 Loading SadTalker Models (Preprocess, Audio2Coeff, Animate)...")
@@ -64,7 +64,7 @@ class SproutSadTalkerEngine:
                 
                 # generate(pic_path, save_dir, preprocess_type, source_image_flag, pic_size)
                 first_coeff_path, crop_pic_path, crop_info = self.preprocess_model.generate(
-                    path, save_dir, 'crop', source_image_flag=True, pic_size=self.size
+                    path, save_dir, 'extcrop', source_image_flag=True, pic_size=self.size
                 )
                 
                 if first_coeff_path:
@@ -109,14 +109,14 @@ class SproutSadTalkerEngine:
             facerender_data = get_facerender_data(
                 coeff_path, data["crop_pic_path"], data["first_coeff_path"], audio_path, 
                 batch_size=2, input_yaw_list=None, input_pitch_list=None, input_roll_list=None,
-                expression_scale=1.0, still_mode=still, preprocess='crop', size=self.size
+                expression_scale=1.0, still_mode=still, preprocess='extcrop', size=self.size
             )
             
             # 3. Final Face Rendering
             # Resulting video path
             result_video_path = self.animate_from_coeff.generate(
                 facerender_data, save_dir, data["source_image"], data["crop_info"], 
-                enhancer=enhancer, background_enhancer=None, preprocess='crop', img_size=self.size
+                enhancer=enhancer, background_enhancer=None, preprocess='extcrop', img_size=self.size
             )
             
             # 4. Move to final output path
