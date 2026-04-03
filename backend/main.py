@@ -18,7 +18,13 @@ from Wav2Lip.sprout_engine import SproutEngine
 from sprout_sadtalker_engine import SproutSadTalkerEngine
 import json, re
 
-load_dotenv()
+# 1. Load configuration from current or parent directories
+load_dotenv() # Load local .env (in backend/)
+# Also load root .env (one level up) if it exists
+root_env = os.path.join(os.path.dirname(base_dir), ".env")
+if os.path.exists(root_env):
+    load_dotenv(dotenv_path=root_env, override=True)
+
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
@@ -71,9 +77,14 @@ def get_best_model():
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 available_models.append(m.name)
-        for preferred in ["models/gemini-1.5-flash", "models/gemini-1.5-flash-001"]:
-            if preferred in available_models: return preferred
-        return available_models[0] if available_models else "models/gemini-pro"
+        for preferred in [
+            "models/gemini-1.5-flash", 
+            "models/gemini-1.5-flash-8b", 
+            "models/gemini-3.1-flash-live", 
+            "models/gemini-1.5-flash-001"
+        ]:
+            if any(preferred in m for m in available_models): return next(m for m in available_models if preferred in m)
+        return available_models[0] if available_models else "models/gemini-1.5-flash"
     except Exception: return "models/gemini-1.5-flash"
 
 WORKING_MODEL_NAME = get_best_model()
@@ -150,7 +161,7 @@ async def chat(user_query: str, avatar_id: str = None, voice_id: str = "en-US-Je
         print("   🧠 Asking Gemini...")
         
         # Injected system instruction for multi-lingual JSON format
-        prompt = user_query + f"\n\nIMPORTANT: {lang_info['system']}. You must respond in valid JSON format ONLY. Structure: {{\"text\": \"your concise response in {lang_info['name']}\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. All fields must be in {lang_info['name']}."
+        prompt = user_query + f"\n\nIMPORTANT: {lang_info['system']}. You must respond in valid JSON format ONLY. Extract around 10 key concepts related to the query. Structure: {{\"text\": \"your concise response in {lang_info['name']}\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. All fields must be in {lang_info['name']}."
         
         response = chat_session.send_message(prompt)
         raw_text = response.text
@@ -226,7 +237,7 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
 
         # Script Generation via Gemini
         lang_info = next((l for l in LANGUAGES if l["id"] == language), LANGUAGES[0])
-        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Structure: {{\"text\": \"3 short sentences (max 60 words) engaging summary script in {lang_info['name']}\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. IMPORTANT: The summary AND all concepts MUST be in {lang_info['name']}. Document summary:\n\n{extracted_text[:8000]}"
+        prompt = f"I am uploading a new document. Please read it and respond in valid JSON format ONLY. Extract 10 key concepts from the document. Structure: {{\"text\": \"3 short sentences (max 60 words) engaging summary script in {lang_info['name']}\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. IMPORTANT: The summary AND all concepts MUST be in {lang_info['name']}. Document summary:\n\n{extracted_text[:8000]}"
         
         if not chat_session: raise HTTPException(500, "Memory not initialized")
         response = chat_session.send_message(prompt)
@@ -266,11 +277,92 @@ async def pdf_to_video(file: UploadFile = File(...), avatar_id: str = None, voic
         traceback.print_exc()
         raise HTTPException(500, str(e))
 
-@app.post("/generate-quiz")
-def generate_quiz():
+@app.post("/voice-chat")
+async def voice_chat(file: UploadFile = File(...), avatar_id: str = None, voice_id: str = "en-US-JennyNeural", language: str = "en"):
+    if not sprout_engine: raise HTTPException(500, "Engine not active")
     if not chat_session: raise HTTPException(500, "Memory not initialized")
     
-    prompt = "Based on our conversation and the document I uploaded, generate a 3-question multiple-choice quiz. Respond in valid JSON format ONLY. IMPORTANT: The 'answer' value MUST be an EXACT, character-for-character match with one of the strings in the 'options' list. Structure: [{\"question\": \"...\", \"options\": [\"A. Option\", \"B. Option\", \"...\"], \"answer\": \"Exact Option String\"}]"
+    if not avatar_id:
+        available_avatars = list(sprout_engine.avatar_cache.keys())
+        avatar_id = available_avatars[0] if available_avatars else None
+
+    # Get language config
+    lang_info = next((l for l in LANGUAGES if l["id"] == language), LANGUAGES[0])
+
+    try:
+        print(f"   🎤 Received Voice Message ({language})")
+        # Save temp audio
+        import subprocess
+        temp_audio = f"{base_dir}/temp_voice.webm"
+        temp_mp3 = f"{base_dir}/temp_voice.mp3"
+        with open(temp_audio, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Convert webm to mp3 for guaranteed Gemini compatibility
+        print("   🔄 Converting audio format...")
+        subprocess.run(["ffmpeg", "-y", "-i", temp_audio, "-q:a", "0", "-map", "a", temp_mp3], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        print("   🧠 Uploading audio to Gemini...")
+        audio_file = genai.upload_file(path=temp_mp3)
+        
+        print("   ⏳ Waiting for audio processing...")
+        while audio_file.state.name == "PROCESSING":
+            await asyncio.sleep(2)
+            audio_file = genai.get_file(audio_file.name)
+            
+        if audio_file.state.name == "FAILED":
+            raise Exception("Audio file processing failed on Gemini server.")
+        
+        # Multimodal Prompt
+        prompt_text = f"IMPORTANT: {lang_info['system']}. I have sent you an audio message. Please transcribe it, answer it, and extract exactly 10 key concepts related to our conversation. You must respond in valid JSON format ONLY. Structure: {{\"text\": \"your concise response in {lang_info['name']}\", \"concepts\": [{{ \"title\": \"Term\", \"explanation\": \"Detail\" }}]}}. All fields must be in {lang_info['name']}."
+        
+        response = chat_session.send_message([audio_file, prompt_text])
+        raw_text = response.text
+        print(f"   ✅ Gemini replied to voice ({len(raw_text)} chars)")
+        
+        # Clean and parse JSON
+        try:
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                ai_text = data.get("text", "I'm processing that.")
+                concepts = data.get("concepts", [])
+            else:
+                ai_text = raw_text
+                concepts = []
+        except Exception:
+            ai_text = raw_text
+            concepts = []
+        
+        # TTS
+        print(f"   🔊 Synthesizing speech: '{ai_text}'")
+        audio_path = f"{base_dir}/response.mp3"
+        communicate = edge_tts.Communicate(ai_text, voice_id)
+        await communicate.save(audio_path)
+        
+        # Video
+        print("   🎬 Generating Avatar Video...")
+        output_path = f"{base_dir}/output_video.mp4"
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, sprout_engine.infer, audio_path, output_path, avatar_id)
+        print("   ✅ Video Generation Complete!")
+        
+        return {
+            "text": ai_text, 
+            "concepts": concepts,
+            "video_url": "http://127.0.0.1:8000/get-video"
+        }
+    except Exception as e:
+        print(f"❌ VOICE CHAT ERROR: {e}")
+        traceback.print_exc()
+        raise HTTPException(500, str(e))
+
+@app.post("/generate-quiz")
+def generate_quiz(language: str = "en"):
+    if not chat_session: raise HTTPException(500, "Memory not initialized")
+    
+    lang_info = next((l for l in LANGUAGES if l["id"] == language), LANGUAGES[0])
+    prompt = f"Based on our conversation and the document I uploaded, generate a 3-question multiple-choice quiz. Respond in valid JSON format ONLY. IMPORTANT: The entire contents of the quiz including questions, options, and answers MUST be in {lang_info['name']}. The 'answer' value MUST be an EXACT, character-for-character match with one of the strings in the 'options' list. Structure: [{{\"question\": \"...\", \"options\": [\"A. Option\", \"B. Option\", \"...\"], \"answer\": \"Exact Option String\"}}]"
     
     try:
         response = chat_session.send_message(prompt)

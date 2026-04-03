@@ -25,6 +25,9 @@ function App() {
   const [isWide, setIsWide] = useState(false); // <--- NEW TOGGLE
   const [selectedLanguage, setSelectedLanguage] = useState('en'); // <--- NEW STATE
   const [videoFinished, setVideoFinished] = useState(false); // <--- NEW STATE
+  const [isRecording, setIsRecording] = useState(false); // <--- NEW STATE FOR WHATSAPP VOICE
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -55,17 +58,68 @@ function App() {
     return () => clearInterval(interval);
   }, [config.avatars?.length, selectedLanguage]);
 
-  // Voice Input
-  const handleVoiceInput = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) { alert("Browser not supported"); return; }
-    const recognition = new SpeechRecognition();
-    const langLocales = { en: 'en-US', es: 'es-ES', fr: 'fr-FR', hi: 'hi-IN', zh: 'zh-CN', de: 'de-DE' };
-    recognition.lang = langLocales[selectedLanguage] || 'en-US';
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onresult = (e) => setInput(e.results[0][0].transcript);
-    recognition.start();
+  // --- NEW: WHATSAPP-STYLE VOICE RECORDING ---
+  const startRecording = async (e) => {
+    if (e) e.preventDefault();
+    if (isRecording || loading) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream, { audioBitsPerSecond: 128000 });
+      audioChunksRef.current = [];
+      
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        if (audioChunksRef.current.length > 0) {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          sendVoiceMessage(audioBlob);
+        }
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+    } catch (err) { console.error("Mic Access Denied", err); }
+  };
+
+  const stopRecording = (e) => {
+    if (e) e.preventDefault();
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const sendVoiceMessage = async (blob) => {
+    setLoading(true);
+    setVideoUrl('loading');
+    
+    const formData = new FormData();
+    formData.append('file', blob, 'voice.webm');
+    formData.append('avatar_id', selectedAvatar);
+    formData.append('voice_id', selectedVoice);
+    formData.append('language', selectedLanguage);
+
+    try {
+      const url = `http://127.0.0.1:8000/voice-chat?avatar_id=${selectedAvatar}&voice_id=${selectedVoice}&language=${selectedLanguage}`;
+      const res = await axios.post(url, formData);
+      
+      setChatHistory(prev => [...prev, 
+        { type: 'user', text: '🎤 Voice Message' }, 
+        { type: 'bot', text: res.data.text }
+      ]);
+      if (res.data.concepts) setConcepts(res.data.concepts);
+      setVideoUrl(`http://127.0.0.1:8000/get-video?t=${new Date().getTime()}`);
+      setVideoFinished(false);
+    } catch (err) {
+      alert("Voice Chat Error: " + err.message);
+      setVideoUrl(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleChat = async (manualInput = null) => {
@@ -145,8 +199,10 @@ function App() {
   const startQuiz = async () => {
     setLoading(true);
     try {
-      const res = await axios.post('http://127.0.0.1:8000/generate-quiz');
-      if (res.data.length > 0) {
+      const res = await axios.post(`http://127.0.0.1:8000/generate-quiz?language=${selectedLanguage}`);
+      if (res.data.error === "quota") {
+        alert(res.data.message);
+      } else if (Array.isArray(res.data) && res.data.length > 0) {
         setQuizData(res.data);
         setCurrentQuizIndex(0);
         setQuizScore(0);
@@ -356,8 +412,13 @@ function App() {
             </div>
             
             <div className="mt-4 relative flex items-center gap-2">
-              <button onClick={handleVoiceInput} className={`p-4 rounded-2xl transition-all shadow-lg ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-700 text-slate-300'}`}>
-                {isListening ? <MicOff size={20} /> : <Mic size={20} />}
+              <button 
+                onPointerDown={startRecording}
+                onPointerUp={stopRecording}
+                title="Hold to Speak (WhatsApp Style)"
+                className={`p-4 rounded-2xl transition-all shadow-lg ${isRecording ? 'bg-red-500 scale-110 shadow-red-500/50' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+              >
+                {isRecording ? <MicOff size={20} className="animate-pulse text-white" /> : <Mic size={20} />}
               </button>
               <div className="relative flex-1">
                 <input
